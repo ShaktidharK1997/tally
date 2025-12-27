@@ -12,7 +12,7 @@ import argparse
 import os
 import sys
 
-from ._version import VERSION, GIT_SHA, REPO_URL
+from ._version import VERSION, GIT_SHA, REPO_URL, check_for_updates
 from .config_loader import load_config
 
 BANNER = r'''
@@ -1795,6 +1795,13 @@ Examples:
         sha_display = GIT_SHA[:8] if GIT_SHA != 'unknown' else 'unknown'
         print(f"tally {VERSION} ({sha_display})")
         print(REPO_URL)
+
+        # Check for updates
+        update_info = check_for_updates()
+        if update_info and update_info.get('update_available'):
+            print()
+            print(f"Update available: {update_info['latest_version']}")
+            print(f"  {update_info['release_url']}")
 
 
 if __name__ == '__main__':
