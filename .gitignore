@@ -37,7 +37,6 @@ Thumbs.db
 
 # Project specific
 output/
-*.html
 
 # PyInstaller
 *.spec
