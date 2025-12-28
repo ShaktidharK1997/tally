@@ -23,6 +23,38 @@ except ImportError:
 
 
 # ============================================================================
+# CURRENCY FORMATTING
+# ============================================================================
+
+def format_currency(amount: float, currency_format: str = "${amount}") -> str:
+    """Format amount with currency symbol/format (no decimals).
+
+    Args:
+        amount: The amount to format
+        currency_format: Format string with {amount} placeholder, e.g. "${amount}" or "{amount} zł"
+
+    Returns:
+        Formatted currency string, e.g. "$1,234" or "1,234 zł"
+    """
+    formatted_num = f"{amount:,.0f}"
+    return currency_format.format(amount=formatted_num)
+
+
+def format_currency_decimal(amount: float, currency_format: str = "${amount}") -> str:
+    """Format amount with currency symbol/format (with 2 decimal places).
+
+    Args:
+        amount: The amount to format
+        currency_format: Format string with {amount} placeholder
+
+    Returns:
+        Formatted currency string with decimals, e.g. "$1,234.56"
+    """
+    formatted_num = f"{amount:,.2f}"
+    return currency_format.format(amount=formatted_num)
+
+
+# ============================================================================
 # DATA PARSING
 # ============================================================================
 
@@ -714,8 +746,12 @@ def analyze_transactions(transactions):
     }
 
 
-def print_summary(stats, year=2025, filter_category=None):
+def print_summary(stats, year=2025, filter_category=None, currency_format="${amount}"):
     """Print analysis summary."""
+    # Local helper for currency formatting
+    def fmt(amount):
+        return format_currency(amount, currency_format)
+
     by_category = stats['by_category']
     monthly_merchants = stats['monthly_merchants']
     annual_merchants = stats['annual_merchants']
@@ -740,21 +776,21 @@ def print_summary(stats, year=2025, filter_category=None):
 
     print("\nMONTHLY BUDGET")
     print("-" * 50)
-    print(f"Monthly Recurring (6+ mo):   ${stats['monthly_avg']:>10,.0f}/mo")
-    print(f"Variable/Discretionary:      ${stats['variable_monthly']:>10,.0f}/mo")
+    print(f"Monthly Recurring (6+ mo):   {fmt(stats['monthly_avg']):>14}/mo")
+    print(f"Variable/Discretionary:      {fmt(stats['variable_monthly']):>14}/mo")
     print(f"                             {'-'*14}")
-    print(f"TRUE MONTHLY BUDGET:         ${stats['monthly_avg'] + stats['variable_monthly']:>10,.0f}/mo")
+    print(f"TRUE MONTHLY BUDGET:         {fmt(stats['monthly_avg'] + stats['variable_monthly']):>14}/mo")
     print()
     print("NON-RECURRING (YTD)")
     print("-" * 50)
-    print(f"Annual Bills:                ${stats['annual_total']:>10,.0f}")
-    print(f"Periodic Recurring:          ${stats['periodic_total']:>10,.0f}")
-    print(f"Travel/Trips:                ${stats['travel_total']:>10,.0f}")
-    print(f"One-Off Purchases:           ${stats['one_off_total']:>10,.0f}")
+    print(f"Annual Bills:                {fmt(stats['annual_total']):>14}")
+    print(f"Periodic Recurring:          {fmt(stats['periodic_total']):>14}")
+    print(f"Travel/Trips:                {fmt(stats['travel_total']):>14}")
+    print(f"One-Off Purchases:           {fmt(stats['one_off_total']):>14}")
     print(f"                             {'-'*14}")
-    print(f"Total Non-Recurring:         ${stats['annual_total'] + stats['periodic_total'] + stats['travel_total'] + stats['one_off_total']:>10,.0f}")
+    print(f"Total Non-Recurring:         {fmt(stats['annual_total'] + stats['periodic_total'] + stats['travel_total'] + stats['one_off_total']):>14}")
     print()
-    print(f"TOTAL SPENDING (YTD):        ${actual_spending:>10,.0f}")
+    print(f"TOTAL SPENDING (YTD):        {fmt(actual_spending):>14}")
 
     # =========================================================================
     # MONTHLY RECURRING (6+ months)
@@ -775,9 +811,9 @@ def print_summary(stats, year=2025, filter_category=None):
         else:
             calc_type = "/12"
             monthly = data['total'] / 12
-        print(f"{merchant:<26} {data['months_active']:>3} {calc_type:<6} ${monthly:>8,.0f} ${data['total']:>10,.0f}")
+        print(f"{merchant:<26} {data['months_active']:>3} {calc_type:<6} {fmt(monthly):>12} {fmt(data['total']):>14}")
 
-    print(f"\n{'TOTAL':<26} {'':<3} {'':<6} ${stats['monthly_avg']:>8,.0f}/mo ${stats['monthly_total']:>10,.0f}")
+    print(f"\n{'TOTAL':<26} {'':<3} {'':<6} {fmt(stats['monthly_avg']):>12}/mo {fmt(stats['monthly_total']):>14}")
 
     # =========================================================================
     # ANNUAL BILLS (once a year)
@@ -790,9 +826,9 @@ def print_summary(stats, year=2025, filter_category=None):
 
     sorted_annual = sorted(annual_merchants.items(), key=lambda x: x[1]['total'], reverse=True)
     for merchant, data in sorted_annual:
-        print(f"{merchant:<28} {data['subcategory']:<15} ${data['total']:>10,.0f}")
+        print(f"{merchant:<28} {data['subcategory']:<15} {fmt(data['total']):>14}")
 
-    print(f"\n{'TOTAL':<28} {'':<15} ${stats['annual_total']:>10,.0f}")
+    print(f"\n{'TOTAL':<28} {'':<15} {fmt(stats['annual_total']):>14}")
 
     # =========================================================================
     # PERIODIC RECURRING (non-monthly recurring)
@@ -805,9 +841,9 @@ def print_summary(stats, year=2025, filter_category=None):
 
     sorted_periodic = sorted(periodic_merchants.items(), key=lambda x: x[1]['total'], reverse=True)
     for merchant, data in sorted_periodic:
-        print(f"{merchant:<28} {data['subcategory']:<15} {data['count']:>6} ${data['total']:>10,.0f}")
+        print(f"{merchant:<28} {data['subcategory']:<15} {data['count']:>6} {fmt(data['total']):>14}")
 
-    print(f"\n{'TOTAL':<28} {'':<15} {'':<6} ${stats['periodic_total']:>10,.0f}")
+    print(f"\n{'TOTAL':<28} {'':<15} {'':<6} {fmt(stats['periodic_total']):>14}")
 
     # =========================================================================
     # TRAVEL/TRIPS
@@ -820,9 +856,9 @@ def print_summary(stats, year=2025, filter_category=None):
 
     sorted_travel = sorted(travel_merchants.items(), key=lambda x: x[1]['total'], reverse=True)
     for merchant, data in sorted_travel[:15]:
-        print(f"{merchant:<28} {data['category']:<15} {data['count']:>6} ${data['total']:>10,.0f}")
+        print(f"{merchant:<28} {data['category']:<15} {data['count']:>6} {fmt(data['total']):>14}")
 
-    print(f"\n{'TOTAL TRAVEL':<28} {'':<15} {'':<6} ${stats['travel_total']:>10,.0f}")
+    print(f"\n{'TOTAL TRAVEL':<28} {'':<15} {'':<6} {fmt(stats['travel_total']):>14}")
 
     # =========================================================================
     # ONE-OFF PURCHASES
@@ -835,9 +871,9 @@ def print_summary(stats, year=2025, filter_category=None):
 
     sorted_oneoff = sorted(one_off_merchants.items(), key=lambda x: x[1]['total'], reverse=True)
     for merchant, data in sorted_oneoff[:15]:
-        print(f"{merchant:<28} {data['category']:<15} ${data['total']:>10,.0f}")
+        print(f"{merchant:<28} {data['category']:<15} {fmt(data['total']):>14}")
 
-    print(f"\n{'TOTAL ONE-OFF':<28} {'':<15} ${stats['one_off_total']:>10,.0f}")
+    print(f"\n{'TOTAL ONE-OFF':<28} {'':<15} {fmt(stats['one_off_total']):>14}")
 
     # =========================================================================
     # VARIABLE/DISCRETIONARY
@@ -861,9 +897,9 @@ def print_summary(stats, year=2025, filter_category=None):
             continue
         months_active = len(info['months'])
         avg = info['total'] / months_active if months_active > 0 else 0
-        print(f"{cat:<18} {subcat:<15} {months_active:>6} ${avg:>8,.0f} ${info['total']:>10,.0f}")
+        print(f"{cat:<18} {subcat:<15} {months_active:>6} {fmt(avg):>12} {fmt(info['total']):>14}")
 
-    print(f"\n{'TOTAL VARIABLE':<18} {'':<15} {'':<6} ${stats['variable_monthly']:>8,.0f}/mo ${stats['variable_total']:>10,.0f}")
+    print(f"\n{'TOTAL VARIABLE':<18} {'':<15} {'':<6} {fmt(stats['variable_monthly']):>12}/mo {fmt(stats['variable_total']):>14}")
 
 
 def generate_embeddings(items):
@@ -878,7 +914,7 @@ def generate_embeddings(items):
     return embeddings.tolist()
 
 
-def write_summary_file(stats, filepath, year=2025, home_locations=None):
+def write_summary_file(stats, filepath, year=2025, home_locations=None, currency_format="${amount}"):
     """Write summary to HTML file.
 
     Args:
@@ -886,8 +922,14 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         filepath: Output file path
         year: Year for display in title
         home_locations: Set of home location codes for location badge coloring
+        currency_format: Format string for currency display, e.g. "${amount}" or "{amount} zł"
     """
     home_locations = home_locations or set()
+    # Local helpers for currency formatting
+    def fmt(amount):
+        return format_currency(amount, currency_format)
+    def fmt_dec(amount):
+        return format_currency_decimal(amount, currency_format)
     by_category = stats['by_category']
     monthly_merchants = stats['monthly_merchants']
     annual_merchants = stats['annual_merchants']
@@ -1884,8 +1926,10 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                 <span class="toggle">▼</span>
             </div>
             <div class="help-section-content">
-                <span class="label">Calculation:</span>
-                <span class="value"><span class="badge avg">avg</span> average when active (consistent monthly payments) · <span class="badge div">/12</span> YTD ÷ 12 (irregular payment amounts)</span>
+                <span class="label">Monthly Recurring:</span>
+                <span class="value"><span class="badge avg">avg</span> consistent payments → avg when active (e.g., Netflix $15×6mo = $90 YTD → $15/mo avg) · <span class="badge div">/12</span> irregular amounts → YTD÷12 (e.g., $1200 once → $100/mo)</span>
+                <span class="label">Variable Avg/Mo:</span>
+                <span class="value">YTD ÷ months active (e.g., Groceries $600 over 4 months → $150/mo). Section total = sum of all Avg/Mo values.</span>
                 <span class="label">Terms:</span>
                 <span class="value"><code>YTD</code> year-to-date total · <code>/mo</code> monthly cost · <code>Months</code> months with transactions</span>
                 <span class="label">Categories:</span>
@@ -1896,49 +1940,49 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         <div class="summary-grid">
             <div class="card monthly">
                 <h2>Monthly Budget</h2>
-                <div class="amount">${true_monthly:,.0f}<span style="font-size: 1rem; color: #888;">/mo</span></div>
+                <div class="amount">{fmt(true_monthly)}<span style="font-size: 1rem; color: #888;">/mo</span></div>
                 <div class="breakdown">
                     <div class="breakdown-item">
                         <span class="name">Monthly Recurring</span>
-                        <span class="value">${stats['monthly_avg']:,.0f} <span class="breakdown-pct">({stats['monthly_total']/actual*100:.1f}%)</span></span>
+                        <span class="value">{fmt(stats['monthly_avg'])} <span class="breakdown-pct">({stats['monthly_total']/actual*100:.1f}%)</span></span>
                     </div>
                     <div class="breakdown-item">
-                        <span class="name">Variable/Discretionary</span>
-                        <span class="value">${stats['variable_monthly']:,.0f} <span class="breakdown-pct">({stats['variable_total']/actual*100:.1f}%)</span></span>
+                        <span class="name" data-tooltip="Sum of Avg/Mo values from variable spending">Variable/Discretionary</span>
+                        <span class="value">{fmt(stats['variable_monthly'])} <span class="breakdown-pct">({stats['variable_total']/actual*100:.1f}%)</span></span>
                     </div>
                 </div>
             </div>
 
             <div class="card non-recurring">
                 <h2>Non-Recurring (YTD)</h2>
-                <div class="amount">${non_recurring_total:,.0f} <span class="breakdown-pct">({non_recurring_total/actual*100:.1f}%)</span></div>
+                <div class="amount">{fmt(non_recurring_total)} <span class="breakdown-pct">({non_recurring_total/actual*100:.1f}%)</span></div>
                 <div class="breakdown">
                     <div class="breakdown-item">
                         <span class="name">Annual Bills</span>
-                        <span class="value">${stats['annual_total']:,.0f} <span class="breakdown-pct">({stats['annual_total']/actual*100:.1f}%)</span></span>
+                        <span class="value">{fmt(stats['annual_total'])} <span class="breakdown-pct">({stats['annual_total']/actual*100:.1f}%)</span></span>
                     </div>
                     <div class="breakdown-item">
                         <span class="name">Periodic Recurring</span>
-                        <span class="value">${stats['periodic_total']:,.0f} <span class="breakdown-pct">({stats['periodic_total']/actual*100:.1f}%)</span></span>
+                        <span class="value">{fmt(stats['periodic_total'])} <span class="breakdown-pct">({stats['periodic_total']/actual*100:.1f}%)</span></span>
                     </div>
                     <div class="breakdown-item">
                         <span class="name">Travel/Trips</span>
-                        <span class="value">${stats['travel_total']:,.0f} <span class="breakdown-pct">({stats['travel_total']/actual*100:.1f}%)</span></span>
+                        <span class="value">{fmt(stats['travel_total'])} <span class="breakdown-pct">({stats['travel_total']/actual*100:.1f}%)</span></span>
                     </div>
                     <div class="breakdown-item">
                         <span class="name">One-Off Purchases</span>
-                        <span class="value">${stats['one_off_total']:,.0f} <span class="breakdown-pct">({stats['one_off_total']/actual*100:.1f}%)</span></span>
+                        <span class="value">{fmt(stats['one_off_total'])} <span class="breakdown-pct">({stats['one_off_total']/actual*100:.1f}%)</span></span>
                     </div>
                 </div>
             </div>
 
             <div class="card total">
                 <h2>Total Spending (YTD)</h2>
-                <div class="amount" id="totalSpending" data-original="{actual:.0f}">${actual:,.0f}</div>
+                <div class="amount" id="totalSpending" data-original="{actual:.0f}">{fmt(actual)}</div>
                 <div class="breakdown">
                     <div class="breakdown-item">
                         <span class="name">Uncategorized</span>
-                        <span class="value">${uncat:,.0f} ({uncat/actual*100:.1f}%)</span>
+                        <span class="value">{fmt(uncat)} ({uncat/actual*100:.1f}%)</span>
                     </div>
                 </div>
             </div>
@@ -1947,7 +1991,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         <section class="monthly-section">
             <div class="section-header" onclick="toggleSection(this)">
                 <h2><span class="toggle">▼</span> <span data-tooltip="Expenses appearing 6+ months with consistent amounts">Monthly Recurring</span></h2>
-                <span class="section-total"><span class="section-monthly">${stats['monthly_avg']:,.0f}/mo</span> · <span class="section-ytd">${stats['monthly_total']:,.0f}</span> <span class="section-pct">({stats['monthly_total']/actual*100:.1f}%)</span></span>
+                <span class="section-total"><span class="section-monthly">{fmt(stats['monthly_avg'])}/mo</span> · <span class="section-ytd">{fmt(stats['monthly_total'])}</span> <span class="section-pct">({stats['monthly_total']/actual*100:.1f}%)</span></span>
             </div>
             <div class="section-content">
             <div class="table-wrapper">
@@ -1986,8 +2030,8 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td>{data['months_active']}</td>
                         <td>{data['count']}</td>
                         <td>{calc_type}</td>
-                        <td class="money">${monthly:,.0f}</td>
-                        <td class="money">${data['total']:,.0f}</td>
+                        <td class="money">{fmt(monthly)}</td>
+                        <td class="money">{fmt(data['total'])}</td>
                         <td class="pct">{pct:.1f}%</td>
                     </tr>'''
         # Add transaction detail rows (hidden by default)
@@ -1995,7 +2039,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         for txn in sorted_txns:
             html += f'''
                     <tr class="txn-row hidden" data-merchant="{merchant_id}" data-amount="{txn['amount']:.2f}">
-                        <td colspan="7"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">${txn['amount']:,.2f}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
+                        <td colspan="7"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">{fmt_dec(txn['amount'])}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
                     </tr>'''
 
     html += f'''
@@ -2004,8 +2048,8 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td></td>
                         <td></td>
                         <td></td>
-                        <td class="money">${stats['monthly_avg']:,.0f}/mo</td>
-                        <td class="money">${stats['monthly_total']:,.0f}</td>
+                        <td class="money">{fmt(stats['monthly_avg'])}/mo</td>
+                        <td class="money">{fmt(stats['monthly_total'])}</td>
                         <td></td>
                     </tr>
                 </tbody>
@@ -2017,7 +2061,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         <section class="annual-section">
             <div class="section-header" onclick="toggleSection(this)">
                 <h2><span class="toggle">▼</span> <span data-tooltip="Once-a-year expenses like insurance or annual subscriptions">Annual Bills</span></h2>
-                <span class="section-total">${stats['annual_total']:,.0f} <span class="section-pct">({stats['annual_total']/actual*100:.1f}%)</span></span>
+                <span class="section-total">{fmt(stats['annual_total'])} <span class="section-pct">({stats['annual_total']/actual*100:.1f}%)</span></span>
             </div>
             <div class="section-content">
             <div class="table-wrapper">
@@ -2045,7 +2089,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td class="merchant"><span class="chevron clickable" onclick="toggleTransactionsFromChevron(event, this)">▶</span> <span class="clickable" onclick="addFilterFromCell(event, this, 'merchant')">{merchant}</span></td>
                         <td class="category clickable" onclick="addFilterFromCell(event, this, 'category')">{data['subcategory']}</td>
                         <td>{data['count']}</td>
-                        <td class="money">${data['total']:,.0f}</td>
+                        <td class="money">{fmt(data['total'])}</td>
                         <td class="pct">{pct:.1f}%</td>
                     </tr>'''
         # Add transaction detail rows
@@ -2053,7 +2097,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         for txn in sorted_txns:
             html += f'''
                     <tr class="txn-row hidden" data-merchant="{merchant_id}" data-amount="{txn['amount']:.2f}">
-                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">${txn['amount']:,.2f}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
+                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">{fmt_dec(txn['amount'])}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
                     </tr>'''
 
     html += f'''
@@ -2061,7 +2105,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td>Total</td>
                         <td></td>
                         <td></td>
-                        <td class="money">${stats['annual_total']:,.0f}</td>
+                        <td class="money">{fmt(stats['annual_total'])}</td>
                         <td></td>
                     </tr>
                 </tbody>
@@ -2073,7 +2117,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         <section class="periodic-section">
             <div class="section-header" onclick="toggleSection(this)">
                 <h2><span class="toggle">▼</span> <span data-tooltip="Regular but not monthly expenses (quarterly, bi-annual)">Periodic Recurring</span></h2>
-                <span class="section-total">${stats['periodic_total']:,.0f} <span class="section-pct">({stats['periodic_total']/actual*100:.1f}%)</span></span>
+                <span class="section-total">{fmt(stats['periodic_total'])} <span class="section-pct">({stats['periodic_total']/actual*100:.1f}%)</span></span>
             </div>
             <div class="section-content">
             <div class="table-wrapper">
@@ -2101,7 +2145,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td class="merchant"><span class="chevron clickable" onclick="toggleTransactionsFromChevron(event, this)">▶</span> <span class="clickable" onclick="addFilterFromCell(event, this, 'merchant')">{merchant}</span></td>
                         <td class="category clickable" onclick="addFilterFromCell(event, this, 'category')">{data['subcategory']}</td>
                         <td>{data['count']}</td>
-                        <td class="money">${data['total']:,.0f}</td>
+                        <td class="money">{fmt(data['total'])}</td>
                         <td class="pct">{pct:.1f}%</td>
                     </tr>'''
         # Add transaction detail rows
@@ -2109,7 +2153,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         for txn in sorted_txns:
             html += f'''
                     <tr class="txn-row hidden" data-merchant="{merchant_id}" data-amount="{txn['amount']:.2f}">
-                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">${txn['amount']:,.2f}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
+                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">{fmt_dec(txn['amount'])}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
                     </tr>'''
 
     html += f'''
@@ -2117,7 +2161,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td>Total</td>
                         <td></td>
                         <td></td>
-                        <td class="money">${stats['periodic_total']:,.0f}</td>
+                        <td class="money">{fmt(stats['periodic_total'])}</td>
                         <td></td>
                     </tr>
                 </tbody>
@@ -2129,7 +2173,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         <section class="travel-section">
             <div class="section-header" onclick="toggleSection(this)">
                 <h2><span class="toggle">▼</span> <span data-tooltip="Spending outside your home location(s)">Travel / Trips</span></h2>
-                <span class="section-total">${stats['travel_total']:,.0f} <span class="section-pct">({stats['travel_total']/actual*100:.1f}%)</span></span>
+                <span class="section-total">{fmt(stats['travel_total'])} <span class="section-pct">({stats['travel_total']/actual*100:.1f}%)</span></span>
             </div>
             <div class="section-content">
             <div class="table-wrapper">
@@ -2158,7 +2202,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td class="merchant"><span class="chevron clickable" onclick="toggleTransactionsFromChevron(event, this)">▶</span> <span class="clickable" onclick="addFilterFromCell(event, this, 'merchant')">{merchant}</span></td>
                         <td class="clickable" onclick="addFilterFromCell(event, this, 'category')">{category_display}</td>
                         <td>{data['count']}</td>
-                        <td class="money">${data['total']:,.0f}</td>
+                        <td class="money">{fmt(data['total'])}</td>
                         <td class="pct">{pct:.1f}%</td>
                     </tr>'''
         # Add transaction detail rows
@@ -2166,7 +2210,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         for txn in sorted_txns:
             html += f'''
                     <tr class="txn-row hidden" data-merchant="{merchant_id}" data-amount="{txn['amount']:.2f}">
-                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">${txn['amount']:,.2f}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
+                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">{fmt_dec(txn['amount'])}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
                     </tr>'''
 
     html += f'''
@@ -2174,7 +2218,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td>Total</td>
                         <td></td>
                         <td></td>
-                        <td class="money">${stats['travel_total']:,.0f}</td>
+                        <td class="money">{fmt(stats['travel_total'])}</td>
                         <td></td>
                     </tr>
                 </tbody>
@@ -2186,7 +2230,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         <section class="oneoff-section">
             <div class="section-header" onclick="toggleSection(this)">
                 <h2><span class="toggle">▼</span> <span data-tooltip="Single large purchases that don't recur">One-Off Purchases</span></h2>
-                <span class="section-total">${stats['one_off_total']:,.0f} <span class="section-pct">({stats['one_off_total']/actual*100:.1f}%)</span></span>
+                <span class="section-total">{fmt(stats['one_off_total'])} <span class="section-pct">({stats['one_off_total']/actual*100:.1f}%)</span></span>
             </div>
             <div class="section-content">
             <div class="table-wrapper">
@@ -2214,7 +2258,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td class="merchant"><span class="chevron clickable" onclick="toggleTransactionsFromChevron(event, this)">▶</span> <span class="clickable" onclick="addFilterFromCell(event, this, 'merchant')">{merchant}</span></td>
                         <td class="category clickable" onclick="addFilterFromCell(event, this, 'category')">{data['category']}</td>
                         <td>{data['count']}</td>
-                        <td class="money">${data['total']:,.0f}</td>
+                        <td class="money">{fmt(data['total'])}</td>
                         <td class="pct">{pct:.1f}%</td>
                     </tr>'''
         # Add transaction detail rows
@@ -2222,7 +2266,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         for txn in sorted_txns:
             html += f'''
                     <tr class="txn-row hidden" data-merchant="{merchant_id}" data-amount="{txn['amount']:.2f}">
-                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">${txn['amount']:,.2f}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
+                        <td colspan="5"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">{fmt_dec(txn['amount'])}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
                     </tr>'''
 
     html += f'''
@@ -2230,7 +2274,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td>Total</td>
                         <td></td>
                         <td></td>
-                        <td class="money">${stats['one_off_total']:,.0f}</td>
+                        <td class="money">{fmt(stats['one_off_total'])}</td>
                         <td></td>
                     </tr>
                 </tbody>
@@ -2241,8 +2285,8 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
 
         <section class="variable-section">
             <div class="section-header" onclick="toggleSection(this)">
-                <h2><span class="toggle">▼</span> <span data-tooltip="Day-to-day spending that doesn't fit other patterns">Variable / Discretionary</span></h2>
-                <span class="section-total"><span class="section-monthly">${stats['variable_monthly']:,.0f}/mo</span> · <span class="section-ytd">${stats['variable_total']:,.0f}</span> <span class="section-pct">({stats['variable_total']/actual*100:.1f}%)</span></span>
+                <h2><span class="toggle">▼</span> <span data-tooltip="Day-to-day spending. Monthly total = sum of Avg/Mo values.">Variable / Discretionary</span></h2>
+                <span class="section-total"><span class="section-monthly">{fmt(stats['variable_monthly'])}/mo</span> · <span class="section-ytd">{fmt(stats['variable_total'])}</span> <span class="section-pct">({stats['variable_total']/actual*100:.1f}%)</span></span>
             </div>
             <div class="section-content">
             <div class="table-wrapper">
@@ -2251,11 +2295,11 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                     <tr>
                         <th onclick="sortTable('variable-table', 0, 'string')">Merchant</th>
                         <th onclick="sortTable('variable-table', 1, 'string')">Category</th>
-                        <th onclick="sortTable('variable-table', 2, 'number')">Months</th>
-                        <th onclick="sortTable('variable-table', 3, 'number')">Count</th>
-                        <th onclick="sortTable('variable-table', 4, 'money')">Avg/Mo</th>
-                        <th onclick="sortTable('variable-table', 5, 'money')">YTD</th>
-                        <th onclick="sortTable('variable-table', 6, 'number')">%</th>
+                        <th onclick="sortTable('variable-table', 2, 'number')" data-tooltip="Number of months with transactions">Months</th>
+                        <th onclick="sortTable('variable-table', 3, 'number')" data-tooltip="Total transaction count">Count</th>
+                        <th onclick="sortTable('variable-table', 4, 'money')" data-tooltip="YTD ÷ months active — average spend per active month">Avg/Mo</th>
+                        <th onclick="sortTable('variable-table', 5, 'money')" data-tooltip="Year-to-date total">YTD</th>
+                        <th onclick="sortTable('variable-table', 6, 'number')" data-tooltip="Percentage of section total">%</th>
                     </tr>
                 </thead>
                 <tbody>'''
@@ -2275,8 +2319,8 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td class="category"><span class="clickable" onclick="addFilterFromCell(event, this, 'category')">{data['category']}</span>/<span class="clickable" onclick="addFilterFromCell(event, this, 'category')">{data['subcategory']}</span></td>
                         <td>{months}</td>
                         <td>{data['count']}</td>
-                        <td class="money">${avg:,.0f}</td>
-                        <td class="money">${data['total']:,.0f}</td>
+                        <td class="money">{fmt(avg)}</td>
+                        <td class="money">{fmt(data['total'])}</td>
                         <td class="pct">{pct:.1f}%</td>
                     </tr>'''
         # Add transaction detail rows
@@ -2284,7 +2328,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
         for txn in sorted_txns:
             html += f'''
                     <tr class="txn-row hidden" data-merchant="{merchant_id}" data-amount="{txn['amount']:.2f}">
-                        <td colspan="7"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">${txn['amount']:,.2f}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
+                        <td colspan="7"><div class="txn-detail"><span class="txn-date">{txn['date']}</span><span class="txn-desc">{txn['description']}</span><span class="txn-amount">{fmt_dec(txn['amount'])}</span><span class="txn-source {txn['source'].lower()}">{txn['source']}</span>{location_badge(txn.get('location'))}</div></td>
                     </tr>'''
 
     html += f'''
@@ -2293,8 +2337,8 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                         <td></td>
                         <td></td>
                         <td></td>
-                        <td class="money">${stats['variable_monthly']:,.0f}/mo</td>
-                        <td class="money">${stats['variable_total']:,.0f}</td>
+                        <td class="money">{fmt(stats['variable_monthly'])}/mo</td>
+                        <td class="money">{fmt(stats['variable_total'])}</td>
                         <td></td>
                     </tr>
                 </tbody>
@@ -2309,6 +2353,13 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
     </div>
 
     <script>
+        // Currency format
+        const currencyFormat = '{currency_format}';
+        function formatCurrency(amount) {{
+            const formatted = amount.toLocaleString('en-US', {{ maximumFractionDigits: 0 }});
+            return currencyFormat.replace('{{amount}}', formatted);
+        }}
+
         // Store original totals
         const originalTotals = {{
             monthly: {stats['monthly_avg']},
@@ -2423,7 +2474,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                 restoreOriginalTotals();
                 const totalEl = document.getElementById('totalSpending');
                 const original = parseInt(totalEl.dataset.original);
-                totalEl.textContent = '$' + original.toLocaleString('en-US');
+                totalEl.textContent = formatCurrency(original);
                 return;
             }}
 
@@ -2798,12 +2849,13 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
 
         // Parse money value from cell
         function parseMoney(text) {{
-            return parseFloat(text.replace(/[$,\\/mo]/g, '')) || 0;
+            // Remove currency symbols, commas, and /mo suffix
+            return parseFloat(text.replace(/[^0-9.-]/g, '')) || 0;
         }}
 
         // Format as money
         function formatMoney(value, perMonth = false) {{
-            const formatted = '$' + value.toLocaleString('en-US', {{ maximumFractionDigits: 0 }});
+            const formatted = formatCurrency(value);
             return perMonth ? formatted + '/mo' : formatted;
         }}
 
@@ -2824,16 +2876,11 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                     // Use data-ytd attribute for precise calculations
                     const ytdValue = parseFloat(row.dataset.ytd) || 0;
                     ytdSum += ytdValue;
-                    if (monthlyColIndex !== null && !monthlyFromYtd) {{
+                    if (monthlyColIndex !== null) {{
                         monthlySum += parseMoney(row.cells[monthlyColIndex].textContent);
                     }}
                 }}
             }});
-
-            // If monthlyFromYtd, calculate monthly as YTD / 12 (not sum of individual Avg/Mo)
-            if (monthlyFromYtd) {{
-                monthlySum = ytdSum / 12;
-            }}
 
             // Second pass: update percentages for visible rows
             if (pctColIndex !== null && ytdSum > 0) {{
@@ -2963,7 +3010,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
                 // Restore original total spending
                 const totalEl = document.getElementById('totalSpending');
                 const original = parseInt(totalEl.dataset.original);
-                totalEl.textContent = '$' + original.toLocaleString('en-US');
+                totalEl.textContent = formatCurrency(original);
                 return;
             }}
 
@@ -3085,7 +3132,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
             // Update Total Spending card with percentage
             const totalEl = document.getElementById('totalSpending');
             const pct = (totalAmount / originalTotals.totalYtd * 100).toFixed(1);
-            totalEl.innerHTML = '$' + totalAmount.toLocaleString('en-US', {{minimumFractionDigits: 0, maximumFractionDigits: 0}}) +
+            totalEl.innerHTML = formatCurrency(totalAmount) +
                 '<span class="filter-pct"> (' + pct + '%)</span>';
         }}
 
@@ -3122,12 +3169,12 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
             updateSectionTotal('periodic-section', periodicTotals.ytd, false, null, totalYtd);
             updateSectionTotal('travel-section', travelTotals.ytd, false, null, totalYtd);
             updateSectionTotal('oneoff-section', oneoffTotals.ytd, false, null, totalYtd);
-            updateSectionTotal('variable-section', variableTotals.ytd / 12, true, variableTotals.ytd, totalYtd);
+            updateSectionTotal('variable-section', variableTotals.monthly, true, variableTotals.ytd, totalYtd);
 
             // Update summary cards
             updateSummaryCards(
                 monthlyTotals.monthly,
-                variableTotals.ytd / 12,
+                variableTotals.monthly,
                 annualTotals.ytd,
                 periodicTotals.ytd,
                 travelTotals.ytd,
@@ -3137,7 +3184,7 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None):
             // Update Total Spending card with filtered total and percentage
             const totalEl = document.getElementById('totalSpending');
             const pct = (totalYtd / originalTotals.totalYtd * 100).toFixed(1);
-            totalEl.innerHTML = '$' + totalYtd.toLocaleString('en-US', {{minimumFractionDigits: 0, maximumFractionDigits: 0}}) +
+            totalEl.innerHTML = formatCurrency(totalYtd) +
                 '<span class="filter-pct"> (' + pct + '%)</span>';
         }}
 

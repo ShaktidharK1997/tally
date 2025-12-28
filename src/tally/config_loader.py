@@ -194,4 +194,7 @@ def load_config(config_dir, settings_file='settings.yaml'):
     # Store config dir for reference
     config['_config_dir'] = config_dir
 
+    # Currency format for display (default: USD)
+    config['currency_format'] = config.get('currency_format', '${amount}')
+
     return config

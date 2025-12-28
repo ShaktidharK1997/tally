@@ -295,3 +295,39 @@ class TestCustomCaptures:
             assert txns[0]['raw_description'] == 'STARBUCKS COFFEE'
 
             os.unlink(f.name)
+
+
+class TestCurrencyFormatting:
+    """Tests for currency formatting functions."""
+
+    def test_format_currency_default(self):
+        """Test default USD formatting."""
+        from tally.analyzer import format_currency
+        assert format_currency(1234) == "$1,234"
+        assert format_currency(0) == "$0"
+        assert format_currency(1000000) == "$1,000,000"
+
+    def test_format_currency_prefix(self):
+        """Test prefix currency formats (Euro, Pound)."""
+        from tally.analyzer import format_currency
+        assert format_currency(1234, "€{amount}") == "€1,234"
+        assert format_currency(1234, "£{amount}") == "£1,234"
+
+    def test_format_currency_suffix(self):
+        """Test suffix currency formats (Polish Złoty)."""
+        from tally.analyzer import format_currency
+        assert format_currency(1234, "{amount} zł") == "1,234 zł"
+        assert format_currency(1234, "{amount} kr") == "1,234 kr"
+
+    def test_format_currency_decimal(self):
+        """Test currency formatting with decimals."""
+        from tally.analyzer import format_currency_decimal
+        assert format_currency_decimal(1234.56) == "$1,234.56"
+        assert format_currency_decimal(1234.56, "€{amount}") == "€1,234.56"
+        assert format_currency_decimal(1234.56, "{amount} zł") == "1,234.56 zł"
+
+    def test_format_currency_negative(self):
+        """Test negative amount formatting."""
+        from tally.analyzer import format_currency
+        assert format_currency(-1234) == "$-1,234"
+        assert format_currency(-1234, "{amount} zł") == "-1,234 zł"

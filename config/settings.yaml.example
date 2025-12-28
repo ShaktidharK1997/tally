@@ -6,6 +6,13 @@
 year: 2025
 title: "Spending Analysis"
 
+# Currency display format (default: "${amount}")
+# Use {amount} as placeholder for the formatted number
+# currency_format: "${amount}"      # US Dollar (prefix)
+# currency_format: "{amount} zł"    # Polish Złoty (suffix)
+# currency_format: "€{amount}"      # Euro (prefix)
+# currency_format: "£{amount}"      # British Pound (prefix)
+
 # Data sources - list of transaction files to process
 # Paths are relative to the parent of the config directory
 data_sources:

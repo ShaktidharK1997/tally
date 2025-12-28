@@ -1178,7 +1178,8 @@ def cmd_run(args):
     stats = analyze_transactions(all_txns)
 
     # Print summary
-    print_summary(stats, year=year)
+    currency_format = config.get('currency_format', '${amount}')
+    print_summary(stats, year=year, currency_format=currency_format)
 
     # Generate HTML unless --summary flag
     if not args.summary:
@@ -1190,7 +1191,7 @@ def cmd_run(args):
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, config.get('html_filename', 'spending_summary.html'))
 
-        write_summary_file(stats, output_path, year=year, home_locations=home_locations)
+        write_summary_file(stats, output_path, year=year, home_locations=home_locations, currency_format=currency_format)
         print(f"\nHTML report: {output_path}")
 
 
@@ -1569,6 +1570,10 @@ def cmd_diag(args):
             print(f"  Output dir: {config.get('output_dir', 'not set')}")
             home_locs = config.get('home_locations', set())
             print(f"  Home locations: {', '.join(sorted(home_locs)) if home_locs else 'auto-detect'}")
+            currency_fmt = config.get('currency_format', '${amount}')
+            from .analyzer import format_currency
+            print(f"  Currency format: {currency_fmt}")
+            print(f"    Example: {format_currency(1234, currency_fmt)}")
         except Exception as e:
             print(f"  Loaded successfully: No")
             print(f"  Error: {e}")
