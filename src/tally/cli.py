@@ -1248,7 +1248,17 @@ def cmd_run(args):
     stats = analyze_transactions(all_txns)
 
     # Parse filter options
-    only_filter = args.only.split(',') if args.only else None
+    only_filter = None
+    if args.only:
+        valid_classifications = {'monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable'}
+        only_filter = [c.strip() for c in args.only.split(',')]
+        invalid = [c for c in only_filter if c not in valid_classifications]
+        if invalid:
+            print(f"Warning: Invalid classification(s) ignored: {', '.join(invalid)}", file=sys.stderr)
+            print(f"  Valid options: {', '.join(sorted(valid_classifications))}", file=sys.stderr)
+            only_filter = [c for c in only_filter if c in valid_classifications]
+            if not only_filter:
+                only_filter = None
     category_filter = args.category if hasattr(args, 'category') and args.category else None
 
     # Handle output format
@@ -2025,11 +2035,23 @@ def cmd_explain(args):
         else:
             # Text format - show all merchants in category
             print(f"Merchants in category: {args.category}\n")
+            found_any = False
             for section in ['monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable']:
                 merchants_dict = stats.get(f'{section}_merchants', {})
                 section_merchants = {k: v for k, v in merchants_dict.items() if v.get('category') == args.category}
                 if section_merchants:
+                    found_any = True
                     _print_classification_summary(section, section_merchants, verbose, stats['num_months'])
+            if not found_any:
+                # Suggest categories that do exist
+                all_categories = set()
+                for section in ['monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable']:
+                    for data in stats.get(f'{section}_merchants', {}).values():
+                        if data.get('category'):
+                            all_categories.add(data['category'])
+                print(f"No merchants found in category '{args.category}'")
+                if all_categories:
+                    print(f"\nAvailable categories: {', '.join(sorted(all_categories))}")
 
     else:
         # No specific merchant - show classification summary
