@@ -2054,6 +2054,7 @@ def cmd_update(args):
     if success:
         print(f"\n✓ {message}")
         print("\nRestart tally to use the new version.")
+        print("\nTip: Run 'tally update --assets' to get the latest AGENTS.md and CLAUDE.md")
     else:
         print(f"\n✗ {message}")
         sys.exit(1)
