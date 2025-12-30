@@ -204,6 +204,7 @@ tally explain Netflix             # Explain specific merchant
 tally explain Netflix -v          # With decision trace
 tally explain -c monthly          # Explain all monthly merchants
 tally explain --category Food     # Explain all Food category merchants
+tally explain --tags business     # Explain all business-tagged merchants
 
 # View summary only (find uncategorized transactions)
 tally run --summary
@@ -290,9 +291,40 @@ When working with this budget analyzer, you may be asked to:
 
 This is the main file you'll edit. Each row maps a transaction pattern to a category.
 
-**Format:** `Pattern,Merchant,Category,Subcategory`
+**Format:** `Pattern,Merchant,Category,Subcategory,Tags`
 
-**Pattern** is a Python regex (case-insensitive) matched against transaction descriptions.
+- **Pattern** is a Python regex (case-insensitive) matched against transaction descriptions
+- **Tags** (optional) are pipe-separated labels for filtering, e.g., `business|reimbursable`
+
+### Tags
+
+Tags let you add custom labels to merchants for filtering:
+
+```csv
+Pattern,Merchant,Category,Subcategory,Tags
+UBER\\s(?!EATS),Uber,Transport,Rideshare,business|reimbursable
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment|recurring
+GITHUB,GitHub,Subscriptions,Software,business|recurring
+WHOLEFDS,Whole Foods,Food,Grocery,
+```
+
+**Common tag use cases:**
+- `business` - Business expenses
+- `reimbursable` - Will be reimbursed by employer
+- `entertainment` - Personal entertainment
+- `recurring` - Auto-renews monthly/yearly
+- `tax-deductible` - Tax-related expenses
+
+**Filtering by tags:**
+```bash
+tally explain --tags business              # Show all business-tagged merchants
+tally explain --tags business,reimbursable # Show merchants with either tag
+```
+
+**In the HTML UI:**
+- Tags appear as badges in the Tags column
+- Click a tag badge to filter by that tag
+- Type `t:business` in search to filter
 
 ### Pattern Examples
 
@@ -1925,12 +1957,26 @@ def cmd_diag(args):
             for err in diag['user_rules_errors']:
                 print(f"    - {err}")
 
+        # Tag statistics
+        if diag.get('rules_with_tags', 0) > 0:
+            print()
+            pct = (diag['rules_with_tags'] / diag['user_rules_count'] * 100) if diag['user_rules_count'] > 0 else 0
+            print(f"  Rules with tags: {diag['rules_with_tags']}/{diag['user_rules_count']} ({pct:.0f}%)")
+            if diag.get('unique_tags'):
+                print(f"  Unique tags: {', '.join(sorted(diag['unique_tags']))}")
+
         if diag['user_rules']:
             print()
             print("  USER RULES (all):")
-            for pattern, merchant, category, subcategory in diag['user_rules']:
+            for rule in diag['user_rules']:
+                if len(rule) == 5:
+                    pattern, merchant, category, subcategory, tags = rule
+                else:
+                    pattern, merchant, category, subcategory = rule
+                    tags = []
                 print(f"    {pattern}")
-                print(f"      -> {merchant} | {category} > {subcategory}")
+                tags_str = f" [{', '.join(tags)}]" if tags else ""
+                print(f"      -> {merchant} | {category} > {subcategory}{tags_str}")
     else:
         print()
         print("  No merchant_categories.csv found.")
@@ -1955,11 +2001,13 @@ def cmd_diag(args):
                 'user_rules_exists': diag['user_rules_exists'],
                 'user_rules_count': diag['user_rules_count'],
                 'user_rules': [
-                    {'pattern': p, 'merchant': m, 'category': c, 'subcategory': s}
-                    for p, m, c, s in diag['user_rules']
+                    {'pattern': r[0], 'merchant': r[1], 'category': r[2], 'subcategory': r[3], 'tags': r[4] if len(r) > 4 else []}
+                    for r in diag['user_rules']
                 ],
                 'errors': diag['user_rules_errors'],
                 'total_rules': diag['total_rules'],
+                'rules_with_tags': diag.get('rules_with_tags', 0),
+                'unique_tags': sorted(diag.get('unique_tags', set())),
             }
         }
         if config and config.get('data_sources'):
@@ -2255,6 +2303,45 @@ def cmd_explain(args):
                 if all_categories:
                     print(f"\nAvailable categories: {', '.join(sorted(all_categories))}")
 
+    elif hasattr(args, 'tags') and args.tags:
+        # Filter by tags across all classifications
+        filter_tags = set(t.strip().lower() for t in args.tags.split(','))
+
+        if args.format == 'json':
+            # Filter merchants by tags and output JSON
+            import json
+            from .analyzer import build_merchant_json
+            matched_merchants = []
+            for section in ['monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable']:
+                for name, data in stats.get(f'{section}_merchants', {}).items():
+                    merchant_tags = set(t.lower() for t in data.get('tags', []))
+                    if merchant_tags & filter_tags:
+                        matched_merchants.append(build_merchant_json(name, data, verbose))
+            matched_merchants.sort(key=lambda x: x['monthly_value'], reverse=True)
+            print(json.dumps({'tags': list(filter_tags), 'merchants': matched_merchants}, indent=2))
+        else:
+            # Text format - show all merchants with tags
+            print(f"Merchants with tags: {', '.join(sorted(filter_tags))}\n")
+            found_any = False
+            for section in ['monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable']:
+                merchants_dict = stats.get(f'{section}_merchants', {})
+                section_merchants = {
+                    k: v for k, v in merchants_dict.items()
+                    if set(t.lower() for t in v.get('tags', [])) & filter_tags
+                }
+                if section_merchants:
+                    found_any = True
+                    _print_classification_summary(section, section_merchants, verbose, stats['num_months'])
+            if not found_any:
+                # Suggest tags that do exist
+                all_tags = set()
+                for section in ['monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable']:
+                    for data in stats.get(f'{section}_merchants', {}).values():
+                        all_tags.update(data.get('tags', []))
+                print(f"No merchants found with tags: {', '.join(sorted(filter_tags))}")
+                if all_tags:
+                    print(f"\nAvailable tags: {', '.join(sorted(all_tags))}")
+
     else:
         # No specific merchant - show classification summary
         _print_explain_summary(stats, verbose)
@@ -2288,6 +2375,11 @@ def _print_merchant_explanation(name, data, output_format, verbose, num_months):
             print(f"\n**Calculation:** {data.get('calc_type', '')} ({data.get('calc_reasoning', '')})")
             print(f"  Formula: {data.get('calc_formula', '')}")
 
+        # Show tags
+        tags = data.get('tags', [])
+        if tags:
+            print(f"**Tags:** {', '.join(sorted(tags))}")
+
         # Show pattern match info
         match_info = data.get('match_info')
         if match_info:
@@ -2301,6 +2393,11 @@ def _print_merchant_explanation(name, data, output_format, verbose, num_months):
         reasoning = data.get('reasoning', {})
         print(f"{name} -> {classification}")
         print(f"  {reasoning.get('decision', 'N/A')}")
+
+        # Show tags
+        tags = data.get('tags', [])
+        if tags:
+            print(f"  Tags: {', '.join(sorted(tags))}")
 
         if verbose >= 1:
             trace = reasoning.get('trace', [])
@@ -2496,6 +2593,10 @@ Examples:
         help='Filter to specific category'
     )
     run_parser.add_argument(
+        '--tags',
+        help='Filter by tags (comma-separated, e.g., --tags business,reimbursable)'
+    )
+    run_parser.add_argument(
         '--no-embedded-html',
         dest='embedded_html',
         action='store_false',
@@ -2616,6 +2717,10 @@ Examples:
     explain_parser.add_argument(
         '--category',
         help='Filter to specific category'
+    )
+    explain_parser.add_argument(
+        '--tags',
+        help='Filter by tags (comma-separated, e.g., --tags business,reimbursable)'
     )
 
     # version subcommand

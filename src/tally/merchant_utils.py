@@ -23,17 +23,19 @@ from .modifier_parser import (
 def load_merchant_rules(csv_path):
     """Load user merchant categorization rules from CSV file.
 
-    CSV format: Pattern,Merchant,Category,Subcategory
+    CSV format: Pattern,Merchant,Category,Subcategory[,Tags]
 
     Patterns support inline modifiers for amount/date matching:
         COSTCO[amount>200] - Match COSTCO transactions over $200
         BESTBUY[date=2025-01-15] - Match BESTBUY on specific date
         MERCHANT[amount:50-200][date:2025-01-01..2025-12-31] - Combined
 
+    Tags are optional, pipe-separated: business|reimbursable
+
     Lines starting with # are treated as comments and skipped.
     Patterns are Python regular expressions matched against transaction descriptions.
 
-    Returns list of tuples: (pattern, merchant_name, category, subcategory, parsed_pattern)
+    Returns list of tuples: (pattern, merchant_name, category, subcategory, parsed_pattern, tags)
     """
     if not os.path.exists(csv_path):
         return []  # No user rules file
@@ -56,12 +58,18 @@ def load_merchant_rules(csv_path):
                 # Invalid modifier syntax - use pattern as-is without modifiers
                 parsed = ParsedPattern(regex_pattern=pattern_str)
 
+            # Parse tags (optional, pipe-separated)
+            tags_str = row.get('Tags') or ''
+            tags_str = tags_str.strip()
+            tags = [t.strip() for t in tags_str.split('|') if t.strip()] if tags_str else []
+
             rules.append((
                 parsed.regex_pattern,  # Pure regex for matching
                 row['Merchant'],
                 row['Category'],
                 row['Subcategory'],
-                parsed  # Full parsed pattern with conditions
+                parsed,  # Full parsed pattern with conditions
+                tags  # List of tags
             ))
     return rules
 
@@ -73,7 +81,7 @@ def get_all_rules(csv_path=None):
         csv_path: Optional path to user's merchant_categories.csv
 
     Returns:
-        List of (pattern, merchant, category, subcategory, parsed_pattern, source) tuples.
+        List of (pattern, merchant, category, subcategory, parsed_pattern, source, tags) tuples.
         Source is always 'user' for rules from the CSV file.
     """
     user_rules_with_source = []
@@ -81,13 +89,18 @@ def get_all_rules(csv_path=None):
         user_rules = load_merchant_rules(csv_path)
         # Add source='user' to each rule
         for rule in user_rules:
-            if len(rule) == 5:
+            if len(rule) == 6:
+                # New format with tags
+                pattern, merchant, category, subcategory, parsed, tags = rule
+                user_rules_with_source.append((pattern, merchant, category, subcategory, parsed, 'user', tags))
+            elif len(rule) == 5:
+                # Old format without tags
                 pattern, merchant, category, subcategory, parsed = rule
-                user_rules_with_source.append((pattern, merchant, category, subcategory, parsed, 'user'))
+                user_rules_with_source.append((pattern, merchant, category, subcategory, parsed, 'user', []))
             else:
                 pattern, merchant, category, subcategory = rule
                 parsed = ParsedPattern(regex_pattern=pattern)
-                user_rules_with_source.append((pattern, merchant, category, subcategory, parsed, 'user'))
+                user_rules_with_source.append((pattern, merchant, category, subcategory, parsed, 'user', []))
 
     return user_rules_with_source
 
@@ -99,9 +112,11 @@ def diagnose_rules(csv_path=None):
         - user_rules_path: Path to user rules file (or None)
         - user_rules_exists: Whether the user rules file exists
         - user_rules_count: Number of user rules loaded
-        - user_rules: List of user rules (pattern, merchant, category, subcategory)
+        - user_rules: List of user rules (pattern, merchant, category, subcategory, tags)
         - user_rules_errors: List of any errors encountered while loading
         - total_rules: Total rules count (same as user_rules_count)
+        - rules_with_tags: Count of rules that have tags
+        - unique_tags: Set of all unique tags across all rules
     """
     import re
 
@@ -112,6 +127,8 @@ def diagnose_rules(csv_path=None):
         'user_rules': [],
         'user_rules_errors': [],
         'total_rules': 0,
+        'rules_with_tags': 0,
+        'unique_tags': set(),
     }
 
     if not csv_path:
@@ -172,6 +189,11 @@ def diagnose_rules(csv_path=None):
                 category = row.get('Category', '').strip()
                 subcategory = row.get('Subcategory', '').strip()
 
+                # Parse tags (optional, pipe-separated)
+                tags_str = row.get('Tags') or ''
+                tags_str = tags_str.strip()
+                tags = [t.strip() for t in tags_str.split('|') if t.strip()] if tags_str else []
+
                 if not merchant:
                     result['user_rules_errors'].append(
                         f"Row {row_num}: Missing merchant name for pattern '{pattern}'"
@@ -181,7 +203,12 @@ def diagnose_rules(csv_path=None):
                         f"Row {row_num}: Missing category for pattern '{pattern}'"
                     )
 
-                result['user_rules'].append((pattern, merchant, category, subcategory))
+                result['user_rules'].append((pattern, merchant, category, subcategory, tags))
+
+                # Track tag statistics
+                if tags:
+                    result['rules_with_tags'] += 1
+                    result['unique_tags'].update(tags)
 
         result['user_rules_count'] = len(result['user_rules'])
         result['total_rules'] = result['user_rules_count']
@@ -258,14 +285,14 @@ def normalize_merchant(
 
     Args:
         description: Raw transaction description
-        rules: List of (pattern, merchant, category, subcategory, parsed_pattern) tuples
-              or (pattern, merchant, category, subcategory, parsed_pattern, source) tuples
+        rules: List of (pattern, merchant, category, subcategory, parsed_pattern, source, tags) tuples
+              or older formats with fewer elements
         amount: Optional transaction amount for modifier matching
         txn_date: Optional transaction date for modifier matching
 
     Returns:
         Tuple of (merchant_name, category, subcategory, match_info)
-        match_info is a dict with 'pattern', 'source', or None if no match
+        match_info is a dict with 'pattern', 'source', 'tags', or None if no match
     """
     # Clean the description for better matching
     cleaned = clean_description(description)
@@ -274,8 +301,11 @@ def normalize_merchant(
 
     # Try pattern matching against both original and cleaned
     for rule in rules:
-        # Handle various formats: 4-tuple, 5-tuple, 6-tuple (with source)
-        if len(rule) == 6:
+        # Handle various formats: 4-tuple, 5-tuple, 6-tuple, 7-tuple (with tags)
+        tags = []
+        if len(rule) == 7:
+            pattern, merchant, category, subcategory, parsed, source, tags = rule
+        elif len(rule) == 6:
             pattern, merchant, category, subcategory, parsed, source = rule
         elif len(rule) == 5:
             pattern, merchant, category, subcategory, parsed = rule
@@ -299,7 +329,7 @@ def normalize_merchant(
                 if not check_all_conditions(parsed, amount, txn_date):
                     continue
 
-            return (merchant, category, subcategory, {'pattern': pattern, 'source': source})
+            return (merchant, category, subcategory, {'pattern': pattern, 'source': source, 'tags': tags})
         except re.error:
             # Invalid regex pattern, skip
             continue

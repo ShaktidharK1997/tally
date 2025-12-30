@@ -117,15 +117,21 @@ data_sources:
 ### merchant_categories.csv
 
 ```csv
-Pattern,Merchant,Category,Subcategory
-WHOLEFDS,Whole Foods,Food,Grocery
-UBER\s(?!EATS),Uber,Transport,Rideshare
-UBER\s*EATS,Uber Eats,Food,Delivery
-COSTCO[amount>200],Costco Bulk,Shopping,Bulk
-BESTBUY[amount=499.99][date=2025-01-15],TV Purchase,Shopping,Electronics
+Pattern,Merchant,Category,Subcategory,Tags
+WHOLEFDS,Whole Foods,Food,Grocery,
+UBER\s(?!EATS),Uber,Transport,Rideshare,business|reimbursable
+UBER\s*EATS,Uber Eats,Food,Delivery,
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment|recurring
+GITHUB,GitHub,Subscriptions,Software,business|recurring
+COSTCO[amount>200],Costco Bulk,Shopping,Bulk,
 ```
 
 Patterns are Python regex (case-insensitive). First match wins.
+
+**Tags** are optional, pipe-separated labels for filtering:
+- Use cases: `business`, `reimbursable`, `entertainment`, `recurring`, `tax-deductible`
+- Filter in UI: Click tag badges or type `t:business` in search
+- Filter in CLI: `tally explain --tags business,reimbursable`
 
 **Inline modifiers** target specific transactions:
 - `[amount>200]`, `[amount:50-100]` - Amount conditions

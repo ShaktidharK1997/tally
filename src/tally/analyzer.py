@@ -199,6 +199,7 @@ def parse_amex(filepath, rules, home_locations=None):
                     'location': location,
                     'is_travel': is_travel_location(location, home_locations),
                     'match_info': match_info,
+                    'tags': match_info.get('tags', []) if match_info else [],
                 })
             except (ValueError, KeyError):
                 continue
@@ -244,7 +245,8 @@ def parse_boa(filepath, rules, home_locations=None):
                     'subcategory': subcategory,
                     'source': 'BOA',
                     'location': location,
-                    'is_travel': is_travel_location(location, home_locations)
+                    'is_travel': is_travel_location(location, home_locations),
+                    'tags': match_info.get('tags', []) if match_info else [],
                 })
             except ValueError:
                 continue
@@ -354,6 +356,7 @@ def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_
                     'is_travel': is_travel_location(location, home_locations),
                     'is_credit': is_credit,
                     'match_info': match_info,
+                    'tags': match_info.get('tags', []) if match_info else [],
                 })
 
             except (ValueError, IndexError):
@@ -683,6 +686,7 @@ def analyze_transactions(transactions):
         'max_payment': 0,  # Largest single payment
         'payments': [],  # All individual payment amounts
         'transactions': [],  # Individual transactions for drill-down
+        'tags': set(),  # Collect all tags from matching rules
     })
     by_month = defaultdict(float)
 
@@ -718,6 +722,8 @@ def analyze_transactions(transactions):
         # Store match info (pattern that matched) - first transaction sets this
         if 'match_info' not in by_merchant[txn['merchant']] and txn.get('match_info'):
             by_merchant[txn['merchant']]['match_info'] = txn['match_info']
+        # Collect tags from all transactions
+        by_merchant[txn['merchant']]['tags'].update(txn.get('tags', []))
 
         by_month[month_key] += txn['amount']
 
@@ -902,11 +908,17 @@ def build_merchant_json(merchant_name, data, verbose=0):
 
     Returns: dict suitable for JSON serialization
     """
+    # Handle tags - could be a set or list
+    tags = data.get('tags', [])
+    if isinstance(tags, set):
+        tags = sorted(tags)
+
     result = {
         'name': merchant_name,
         'classification': data.get('classification', 'unknown'),
         'category': data.get('category', ''),
         'subcategory': data.get('subcategory', ''),
+        'tags': tags,
         'total': round(data.get('total', 0), 2),
         'count': data.get('count', 0),
         'months_active': data.get('months_active', 0),
@@ -943,6 +955,7 @@ def build_merchant_json(merchant_name, data, verbose=0):
         result['pattern'] = {
             'matched': match_info.get('pattern', ''),
             'source': match_info.get('source', 'unknown'),
+            'tags': match_info.get('tags', []),
         }
 
     return result
@@ -1333,7 +1346,8 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
                 'ytd': data.get('total', 0),
                 'monthly': data.get('avg_when_active') or (data.get('total', 0) / num_months if num_months > 0 else 0),
                 'count': data.get('count', len(txns)),
-                'transactions': txns
+                'transactions': txns,
+                'tags': sorted(data.get('tags', set())),  # Convert set to sorted list
             }
         return merchants
 
@@ -1764,7 +1778,8 @@ def write_summary_file(stats, filepath, year=2025, home_locations=None, currency
                 'ytd': data.get('total', 0),
                 'monthly': data.get('avg_when_active') or (data.get('total', 0) / num_months if num_months > 0 else 0),
                 'count': data.get('count', 0),
-                'transactions': txns
+                'transactions': txns,
+                'tags': sorted(data.get('tags', set())),  # Convert set to sorted list
             }
         return merchants, section_total
 

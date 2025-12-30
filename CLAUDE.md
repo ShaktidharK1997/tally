@@ -12,7 +12,8 @@ uv run tally explain /path/to/config               # Classification summary
 uv run tally explain Netflix /path/to/config       # Explain specific merchant
 uv run tally explain Netflix -vv /path/to/config   # Full details + which rule matched
 uv run tally explain -c monthly /path/to/config    # Explain all monthly merchants
-uv run tally diag /path/to/config # Debug config issues
+uv run tally explain --tags business /path/to/config  # Explain business-tagged merchants
+uv run tally diag /path/to/config # Debug config issues (shows tag stats)
 uv run tally discover /path/to/config # Find unknown merchants
 uv run tally inspect file.csv    # Analyze CSV structure
 uv run pytest tests/             # Run all tests
@@ -25,6 +26,7 @@ uv run pytest tests/test_analyzer.py -v # Run analyzer tests
 $ tally explain Netflix -vv
 Netflix → Monthly
   Monthly: Subscriptions appears 6/6 months (50% threshold = 3)
+  Tags: entertainment, recurring
 
   Decision trace:
     ✗ NOT excluded: Subscriptions not in [Transfers, Cash, Income]
@@ -40,13 +42,25 @@ Netflix → Monthly
   Rule: NETFLIX.* (user)   # Shows which pattern matched
 ```
 
+## merchant_categories.csv Format
+
+```csv
+Pattern,Merchant,Category,Subcategory,Tags
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment|recurring
+GITHUB,GitHub,Subscriptions,Software,business|recurring
+UBER\s(?!EATS),Uber,Transport,Rideshare,business|reimbursable
+WHOLEFDS,Whole Foods,Food,Grocery,
+```
+
+**Tags** are optional, pipe-separated labels. Filter with `--tags business` or in UI via `t:business`.
+
 ## Core Files
 
 - `src/tally/analyzer.py` - Core analysis, HTML report generation, currency formatting
 - `src/tally/cli.py` - CLI commands, AGENTS.md template (update for new features)
 - `src/tally/config_loader.py` - Settings loading, migration logic
 - `src/tally/format_parser.py` - CSV format string parsing
-- `src/tally/merchant_utils.py` - Merchant normalization, rule matching
+- `src/tally/merchant_utils.py` - Merchant normalization, rule matching, tags parsing
 - `tests/test_analyzer.py` - Main test file for new features
 - `docs/` - Marketing website (GitHub Pages)
 - `config/` - Example configuration files

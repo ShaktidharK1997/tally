@@ -249,6 +249,17 @@ createApp({
                 type: 'location', filterText: l, displayText: l, id: `l:${l}`
             }));
 
+            // Tags (unique across all merchants)
+            const tags = new Set();
+            for (const section of Object.values(data.sections || {})) {
+                for (const merchant of Object.values(section.merchants || {})) {
+                    (merchant.tags || []).forEach(t => tags.add(t));
+                }
+            }
+            tags.forEach(t => items.push({
+                type: 'tag', filterText: t, displayText: t, id: `t:${t}`
+            }));
+
             return items;
         });
 
@@ -333,6 +344,8 @@ createApp({
                     return (txn.location || '').toLowerCase() === text;
                 case 'month':
                     return monthMatches(txn.month, filter.text);
+                case 'tag':
+                    return (merchant.tags || []).some(t => t.toLowerCase() === text);
                 default:
                     return false;
             }
@@ -427,7 +440,7 @@ createApp({
         }
 
         function filterTypeChar(type) {
-            return { category: 'c', merchant: 'm', location: 'l', month: 'd' }[type] || '?';
+            return { category: 'c', merchant: 'm', location: 'l', month: 'd', tag: 't' }[type] || '?';
         }
 
         function getLocationClass(location) {
@@ -504,7 +517,7 @@ createApp({
                 history.replaceState(null, '', location.pathname);
                 return;
             }
-            const typeChar = { category: 'c', merchant: 'm', location: 'l', month: 'd' };
+            const typeChar = { category: 'c', merchant: 'm', location: 'l', month: 'd', tag: 't' };
             const parts = activeFilters.value.map(f => {
                 const mode = f.mode === 'exclude' ? '-' : '+';
                 return `${mode}${typeChar[f.type]}:${encodeURIComponent(f.text)}`;
@@ -515,7 +528,7 @@ createApp({
         function hashToFilters() {
             const hash = location.hash.slice(1);
             if (!hash) return;
-            const typeMap = { c: 'category', m: 'merchant', l: 'location', d: 'month' };
+            const typeMap = { c: 'category', m: 'merchant', l: 'location', d: 'month', t: 'tag' };
             hash.split('&').forEach(part => {
                 const mode = part[0] === '-' ? 'exclude' : 'include';
                 const start = part[0] === '+' || part[0] === '-' ? 1 : 0;

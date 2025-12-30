@@ -372,8 +372,10 @@ MYCUSTOM,My Custom Merchant,Custom,Category
             assert len(rules) == 1
             assert rules[0][1] == 'My Custom Merchant'
 
-            # All rules should be 6-tuples (with source)
-            assert all(len(r) == 6 for r in rules)
+            # All rules should be 7-tuples (with source and tags)
+            assert all(len(r) == 7 for r in rules)
+            # Tags should be empty list when not specified
+            assert rules[0][6] == []
         finally:
 
             os.unlink(f.name)
@@ -394,5 +396,126 @@ NETFLIX,My Netflix,Entertainment,Movies
             merchant, category, subcategory, match_info = normalize_merchant('NETFLIX.COM', rules)
             assert (merchant, category, subcategory) == ('My Netflix', 'Entertainment', 'Movies')
             assert match_info['source'] == 'user'
+        finally:
+            os.unlink(f.name)
+
+
+class TestTags:
+    """Tests for tag parsing and matching."""
+
+    def test_load_rules_with_tags(self):
+        """Load rules with Tags column."""
+        csv_content = """Pattern,Merchant,Category,Subcategory,Tags
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment|recurring
+UBER,Uber,Transport,Rideshare,business|reimbursable
+COSTCO,Costco,Food,Grocery,
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = load_merchant_rules(f.name)
+
+            assert len(rules) == 3
+            # Rules are now 6-tuples: (pattern, merchant, category, subcategory, parsed, tags)
+            assert rules[0][5] == ['entertainment', 'recurring']
+            assert rules[1][5] == ['business', 'reimbursable']
+            assert rules[2][5] == []  # Empty tags
+        finally:
+            os.unlink(f.name)
+
+    def test_normalize_returns_tags_in_match_info(self):
+        """normalize_merchant should return tags in match_info."""
+        csv_content = """Pattern,Merchant,Category,Subcategory,Tags
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment|recurring
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules(f.name)
+            merchant, category, subcategory, match_info = normalize_merchant('NETFLIX.COM', rules)
+
+            assert merchant == 'Netflix'
+            assert match_info['tags'] == ['entertainment', 'recurring']
+        finally:
+            os.unlink(f.name)
+
+    def test_normalize_empty_tags_when_no_tags(self):
+        """normalize_merchant returns empty tags list when rule has no tags."""
+        csv_content = """Pattern,Merchant,Category,Subcategory,Tags
+COSTCO,Costco,Food,Grocery,
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules(f.name)
+            merchant, category, subcategory, match_info = normalize_merchant('COSTCO WHOLESALE', rules)
+
+            assert merchant == 'Costco'
+            assert match_info['tags'] == []
+        finally:
+            os.unlink(f.name)
+
+    def test_diagnose_rules_includes_tag_stats(self):
+        """diagnose_rules should include tag statistics."""
+        from tally.merchant_utils import diagnose_rules
+
+        csv_content = """Pattern,Merchant,Category,Subcategory,Tags
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment|recurring
+UBER,Uber,Transport,Rideshare,business
+COSTCO,Costco,Food,Grocery,
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            diag = diagnose_rules(f.name)
+
+            assert diag['rules_with_tags'] == 2  # Netflix and Uber have tags
+            assert diag['unique_tags'] == {'entertainment', 'recurring', 'business'}
+        finally:
+            os.unlink(f.name)
+
+    def test_tags_with_whitespace_are_trimmed(self):
+        """Tags with leading/trailing whitespace should be trimmed."""
+        csv_content = """Pattern,Merchant,Category,Subcategory,Tags
+NETFLIX,Netflix,Subscriptions,Streaming, entertainment | recurring
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = load_merchant_rules(f.name)
+
+            assert rules[0][5] == ['entertainment', 'recurring']
+        finally:
+            os.unlink(f.name)
+
+    def test_missing_tags_column_in_row_handled_gracefully(self):
+        """Rows with fewer columns than header (Tags=None) should work."""
+        # This simulates a CSV where header has Tags but some rows don't have that column
+        csv_content = """Pattern,Merchant,Category,Subcategory,Tags
+NETFLIX,Netflix,Subscriptions,Streaming,entertainment
+COSTCO,Costco,Food,Grocery
+UBER,Uber,Transport,Rideshare,business
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = load_merchant_rules(f.name)
+
+            assert len(rules) == 3
+            assert rules[0][5] == ['entertainment']
+            assert rules[1][5] == []  # Row has no Tags column value
+            assert rules[2][5] == ['business']
         finally:
             os.unlink(f.name)
