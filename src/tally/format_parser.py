@@ -7,7 +7,47 @@ Position in the string implies column index.
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Any
+
+
+# Account type presets - explicit behavior for different financial account types
+ACCOUNT_TYPE_PRESETS: Dict[str, Dict[str, Any]] = {
+    'credit_card': {
+        # Credit cards: charges are positive, payments/refunds are negative
+        # Keep signs as-is, let categorization handle payments
+        'negate_amount': False,
+        'skip_negative': False,
+    },
+    'bank': {
+        # Bank accounts: debits (expenses) are negative, credits (income) are positive
+        # Negate to make expenses positive, skip income (negative after negation)
+        'negate_amount': True,
+        'skip_negative': True,
+    },
+    'brokerage': {
+        # Same as bank - withdrawals negative, deposits positive
+        'negate_amount': True,
+        'skip_negative': True,
+    },
+}
+
+
+def get_account_type_settings(account_type: str) -> Dict[str, Any]:
+    """Get the preset settings for an account type.
+
+    Args:
+        account_type: One of 'credit_card', 'bank', 'brokerage'
+
+    Returns:
+        Dict with negate_amount and skip_negative settings
+
+    Raises:
+        ValueError if account_type is unknown
+    """
+    if account_type not in ACCOUNT_TYPE_PRESETS:
+        valid = ', '.join(ACCOUNT_TYPE_PRESETS.keys())
+        raise ValueError(f"Unknown account_type: '{account_type}'. Valid types: {valid}")
+    return ACCOUNT_TYPE_PRESETS[account_type].copy()
 
 
 @dataclass
@@ -23,6 +63,8 @@ class FormatSpec:
     has_header: bool = True
     source_name: Optional[str] = None  # Optional override for transaction source
     negate_amount: bool = False  # If True, flip the sign of amounts (for credit cards)
+    delimiter: Optional[str] = None  # Column delimiter: None=comma, 'tab', 'whitespace', or regex pattern
+    skip_negative: bool = False  # If True, skip negative amounts (credits/income) after negation
 
 
 # Reserved field names that cannot be used for custom captures
@@ -161,7 +203,8 @@ def parse_format_string(format_str: str, description_template: Optional[str] = N
         description_template=description_template,
         location_column=field_positions.get('location'),
         has_header=True,
-        negate_amount=negate_amount
+        negate_amount=negate_amount,
+        delimiter=None  # Will be set by config_loader if specified
     )
 
 

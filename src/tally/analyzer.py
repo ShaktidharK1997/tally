@@ -252,6 +252,46 @@ def parse_boa(filepath, rules, home_locations=None, cleaning_patterns=None):
     return transactions
 
 
+def _iter_rows_with_delimiter(filepath, delimiter, has_header):
+    """Iterate over rows, handling different delimiter types.
+
+    Args:
+        filepath: Path to the file
+        delimiter: None for CSV, 'tab' for TSV, or 'regex:pattern' for regex
+        has_header: Whether to skip the first line
+
+    Yields:
+        List of column values for each row
+    """
+    with open(filepath, 'r', encoding='utf-8') as f:
+        if delimiter and delimiter.startswith('regex:'):
+            # Regex-based parsing
+            pattern = re.compile(delimiter[6:])  # Strip 'regex:' prefix
+            for i, line in enumerate(f):
+                if has_header and i == 0:
+                    continue
+                line = line.strip()
+                if not line:
+                    continue
+                match = pattern.match(line)
+                if match:
+                    yield list(match.groups())
+        elif delimiter == 'tab' or delimiter == '\t':
+            # Tab-separated
+            reader = csv.reader(f, delimiter='\t')
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                yield row
+        else:
+            # Standard CSV (comma-delimited)
+            reader = csv.reader(f)
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                yield row
+
+
 def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_name='CSV',
                       decimal_separator='.', cleaning_patterns=None):
     """
@@ -259,12 +299,17 @@ def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_
 
     Args:
         filepath: Path to the CSV file
-        format_spec: FormatSpec defining column mappings
+        format_spec: FormatSpec defining column mappings (supports delimiter option)
         rules: Merchant categorization rules
         home_locations: Set of location codes considered "home"
         source_name: Name to use for transaction source (default: 'CSV')
         decimal_separator: Character used as decimal separator ('.' or ',')
         cleaning_patterns: Optional list of regex patterns to strip from descriptions
+
+    Supported delimiters (via format_spec.delimiter):
+        - None or ',': Standard CSV (comma-delimited)
+        - 'tab' or '\\t': Tab-separated values
+        - 'regex:PATTERN': Regex with capture groups for columns
 
     Returns:
         List of transaction dictionaries
@@ -272,97 +317,97 @@ def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_
     home_locations = home_locations or set()
     transactions = []
 
-    with open(filepath, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
+    # Get delimiter from format spec
+    delimiter = getattr(format_spec, 'delimiter', None)
 
-        # Skip header if expected
-        if format_spec.has_header:
-            next(reader, None)
+    for row in _iter_rows_with_delimiter(filepath, delimiter, format_spec.has_header):
+        try:
+            # Ensure row has enough columns
+            required_cols = [format_spec.date_column, format_spec.amount_column]
+            if format_spec.description_column is not None:
+                required_cols.append(format_spec.description_column)
+            if format_spec.custom_captures:
+                required_cols.extend(format_spec.custom_captures.values())
+            if format_spec.location_column is not None:
+                required_cols.append(format_spec.location_column)
+            max_col = max(required_cols)
 
-        for row in reader:
-            try:
-                # Ensure row has enough columns
-                required_cols = [format_spec.date_column, format_spec.amount_column]
-                if format_spec.description_column is not None:
-                    required_cols.append(format_spec.description_column)
-                if format_spec.custom_captures:
-                    required_cols.extend(format_spec.custom_captures.values())
-                if format_spec.location_column is not None:
-                    required_cols.append(format_spec.location_column)
-                max_col = max(required_cols)
+            if len(row) <= max_col:
+                continue  # Skip malformed rows
 
-                if len(row) <= max_col:
-                    continue  # Skip malformed rows
+            # Extract values
+            date_str = row[format_spec.date_column].strip()
+            amount_str = row[format_spec.amount_column].strip()
 
-                # Extract values
-                date_str = row[format_spec.date_column].strip()
-                amount_str = row[format_spec.amount_column].strip()
+            # Build description from either mode
+            if format_spec.description_column is not None:
+                # Mode 1: Simple {description}
+                description = row[format_spec.description_column].strip()
+            else:
+                # Mode 2: Custom captures + template
+                captures = {}
+                for name, col_idx in format_spec.custom_captures.items():
+                    captures[name] = row[col_idx].strip() if col_idx < len(row) else ''
+                description = format_spec.description_template.format(**captures)
 
-                # Build description from either mode
-                if format_spec.description_column is not None:
-                    # Mode 1: Simple {description}
-                    description = row[format_spec.description_column].strip()
-                else:
-                    # Mode 2: Custom captures + template
-                    captures = {}
-                    for name, col_idx in format_spec.custom_captures.items():
-                        captures[name] = row[col_idx].strip() if col_idx < len(row) else ''
-                    description = format_spec.description_template.format(**captures)
-
-                # Skip empty rows
-                if not date_str or not description or not amount_str:
-                    continue
-
-                # Parse date - handle optional day suffix (e.g., "01/02/2017  Mon")
-                date_str = date_str.split()[0]  # Take just the date part
-                date = datetime.strptime(date_str, format_spec.date_format)
-
-                # Parse amount (handle locale-specific formats)
-                amount = parse_amount(amount_str, decimal_separator)
-
-                # Apply negation if specified (for credit cards where positive = charge)
-                if format_spec.negate_amount:
-                    amount = -amount
-
-                # Skip zero amounts
-                if amount == 0:
-                    continue
-
-                # Track if this is a credit (negative amount = income/refund)
-                is_credit = amount < 0
-
-                # Extract location
-                location = None
-                if format_spec.location_column is not None:
-                    location = row[format_spec.location_column].strip()
-                if not location:
-                    location = extract_location(description)
-
-                # Normalize merchant
-                merchant, category, subcategory, match_info = normalize_merchant(
-                    description, rules, amount=amount, txn_date=date.date(),
-                    cleaning_patterns=cleaning_patterns
-                )
-
-                transactions.append({
-                    'date': date,
-                    'raw_description': description,
-                    'description': merchant,
-                    'amount': amount,
-                    'merchant': merchant,
-                    'category': category,
-                    'subcategory': subcategory,
-                    'source': format_spec.source_name or source_name,
-                    'location': location,
-                    'is_travel': is_travel_location(location, home_locations),
-                    'is_credit': is_credit,
-                    'match_info': match_info,
-                    'tags': match_info.get('tags', []) if match_info else [],
-                })
-
-            except (ValueError, IndexError):
-                # Skip problematic rows
+            # Skip empty rows
+            if not date_str or not description or not amount_str:
                 continue
+
+            # Parse date - handle optional day suffix (e.g., "01/02/2017  Mon")
+            date_str = date_str.split()[0]  # Take just the date part
+            date = datetime.strptime(date_str, format_spec.date_format)
+
+            # Parse amount (handle locale-specific formats)
+            amount = parse_amount(amount_str, decimal_separator)
+
+            # Apply negation if specified (for credit cards where positive = charge)
+            if format_spec.negate_amount:
+                amount = -amount
+
+            # Skip zero amounts
+            if amount == 0:
+                continue
+
+            # Track if this is a credit (negative amount = income/refund)
+            is_credit = amount < 0
+
+            # Skip credits if configured (for bank accounts where credits are income)
+            if is_credit and getattr(format_spec, 'skip_negative', False):
+                continue
+
+            # Extract location
+            location = None
+            if format_spec.location_column is not None:
+                location = row[format_spec.location_column].strip()
+            if not location:
+                location = extract_location(description)
+
+            # Normalize merchant
+            merchant, category, subcategory, match_info = normalize_merchant(
+                description, rules, amount=amount, txn_date=date.date(),
+                cleaning_patterns=cleaning_patterns
+            )
+
+            transactions.append({
+                'date': date,
+                'raw_description': description,
+                'description': merchant,
+                'amount': amount,
+                'merchant': merchant,
+                'category': category,
+                'subcategory': subcategory,
+                'source': format_spec.source_name or source_name,
+                'location': location,
+                'is_travel': is_travel_location(location, home_locations),
+                'is_credit': is_credit,
+                'match_info': match_info,
+                'tags': match_info.get('tags', []) if match_info else [],
+            })
+
+        except (ValueError, IndexError):
+            # Skip problematic rows
+            continue
 
     return transactions
 
@@ -1056,12 +1101,12 @@ def export_markdown(stats, verbose=0, only=None, category_filter=None, merchant_
     # Classification sections to process
     all_sections = ['monthly', 'annual', 'periodic', 'travel', 'one_off', 'variable']
     section_names = {
-        'monthly': 'Monthly Recurring',
-        'annual': 'Annual Bills',
-        'periodic': 'Periodic Recurring',
-        'travel': 'Travel',
-        'one_off': 'One-Off',
-        'variable': 'Variable/Discretionary',
+        'monthly': 'Every Month',
+        'annual': 'Once a Year',
+        'periodic': 'A Few Times/Year',
+        'travel': 'Travel Expenses',
+        'one_off': 'Large One-Time',
+        'variable': 'Varies by Month',
     }
     sections = only if only else all_sections
 
@@ -1150,27 +1195,27 @@ def print_summary(stats, year=2025, filter_category=None, currency_format="${amo
 
     print("\nMONTHLY BUDGET")
     print("-" * 50)
-    print(f"Monthly Recurring (6+ mo):   {fmt(stats['monthly_avg']):>14}/mo")
-    print(f"Variable/Discretionary:      {fmt(stats['variable_monthly']):>14}/mo")
+    print(f"Every Month (6+ mo):         {fmt(stats['monthly_avg']):>14}/mo")
+    print(f"Varies by Month:             {fmt(stats['variable_monthly']):>14}/mo")
     print(f"                             {'-'*14}")
     print(f"TRUE MONTHLY BUDGET:         {fmt(stats['monthly_avg'] + stats['variable_monthly']):>14}/mo")
     print()
     print("NON-RECURRING (YTD)")
     print("-" * 50)
-    print(f"Annual Bills:                {fmt(stats['annual_total']):>14}")
-    print(f"Periodic Recurring:          {fmt(stats['periodic_total']):>14}")
-    print(f"Travel/Trips:                {fmt(stats['travel_total']):>14}")
-    print(f"One-Off Purchases:           {fmt(stats['one_off_total']):>14}")
+    print(f"Once a Year:                 {fmt(stats['annual_total']):>14}")
+    print(f"A Few Times/Year:            {fmt(stats['periodic_total']):>14}")
+    print(f"Travel Expenses:             {fmt(stats['travel_total']):>14}")
+    print(f"Large One-Time:              {fmt(stats['one_off_total']):>14}")
     print(f"                             {'-'*14}")
     print(f"Total Non-Recurring:         {fmt(stats['annual_total'] + stats['periodic_total'] + stats['travel_total'] + stats['one_off_total']):>14}")
     print()
     print(f"TOTAL SPENDING (YTD):        {fmt(actual_spending):>14}")
 
     # =========================================================================
-    # MONTHLY RECURRING (6+ months)
+    # EVERY MONTH (6+ months)
     # =========================================================================
     print("\n" + "=" * 80)
-    print("MONTHLY RECURRING (Appears 6+ Months)")
+    print("EVERY MONTH (Appears 6+ Months)")
     print("=" * 80)
     print(f"\n{'Merchant':<26} {'Mo':>3} {'Type':<6} {'Monthly':>10} {'YTD':>12}")
     print("-" * 62)
@@ -1190,10 +1235,10 @@ def print_summary(stats, year=2025, filter_category=None, currency_format="${amo
     print(f"\n{'TOTAL':<26} {'':<3} {'':<6} {fmt(stats['monthly_avg']):>12}/mo {fmt(stats['monthly_total']):>14}")
 
     # =========================================================================
-    # ANNUAL BILLS (once a year)
+    # ONCE A YEAR
     # =========================================================================
     print("\n" + "=" * 80)
-    print("ANNUAL BILLS (Once a Year)")
+    print("ONCE A YEAR")
     print("=" * 80)
     print(f"\n{'Merchant':<28} {'Category':<15} {'Total':>12}")
     print("-" * 58)
@@ -1205,10 +1250,10 @@ def print_summary(stats, year=2025, filter_category=None, currency_format="${amo
     print(f"\n{'TOTAL':<28} {'':<15} {fmt(stats['annual_total']):>14}")
 
     # =========================================================================
-    # PERIODIC RECURRING (non-monthly recurring)
+    # A FEW TIMES/YEAR
     # =========================================================================
     print("\n" + "=" * 80)
-    print("PERIODIC RECURRING (Non-Monthly)")
+    print("A FEW TIMES/YEAR")
     print("=" * 80)
     print(f"\n{'Merchant':<28} {'Category':<15} {'Count':>6} {'Total':>12}")
     print("-" * 65)
@@ -1220,10 +1265,10 @@ def print_summary(stats, year=2025, filter_category=None, currency_format="${amo
     print(f"\n{'TOTAL':<28} {'':<15} {'':<6} {fmt(stats['periodic_total']):>14}")
 
     # =========================================================================
-    # TRAVEL/TRIPS
+    # TRAVEL EXPENSES
     # =========================================================================
     print("\n" + "=" * 80)
-    print("TRAVEL/TRIPS")
+    print("TRAVEL EXPENSES")
     print("=" * 80)
     print(f"\n{'Merchant':<28} {'Category':<15} {'Count':>6} {'Total':>12}")
     print("-" * 65)
@@ -1235,10 +1280,10 @@ def print_summary(stats, year=2025, filter_category=None, currency_format="${amo
     print(f"\n{'TOTAL TRAVEL':<28} {'':<15} {'':<6} {fmt(stats['travel_total']):>14}")
 
     # =========================================================================
-    # ONE-OFF PURCHASES
+    # LARGE ONE-TIME
     # =========================================================================
     print("\n" + "=" * 80)
-    print("ONE-OFF PURCHASES")
+    print("LARGE ONE-TIME")
     print("=" * 80)
     print(f"\n{'Merchant':<28} {'Category':<15} {'Total':>12}")
     print("-" * 58)
@@ -1250,10 +1295,10 @@ def print_summary(stats, year=2025, filter_category=None, currency_format="${amo
     print(f"\n{'TOTAL ONE-OFF':<28} {'':<15} {fmt(stats['one_off_total']):>14}")
 
     # =========================================================================
-    # VARIABLE/DISCRETIONARY
+    # VARIES BY MONTH
     # =========================================================================
     print("\n" + "=" * 80)
-    print("VARIABLE/DISCRETIONARY SPENDING")
+    print("VARIES BY MONTH")
     print("=" * 80)
     print(f"\n{'Category':<18} {'Subcategory':<15} {'Months':>6} {'Avg/Mo':>10} {'YTD':>12}")
     print("-" * 70)
@@ -1362,18 +1407,18 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
 
     # Section configurations: (id, merchant_dict, title, has_monthly_column, description)
     section_configs = [
-        ('monthly', monthly_merchants, 'Monthly Recurring', True,
-         'Expenses that occur every month (6+ months of history). Avg/Mo shows the average monthly cost.'),
-        ('annual', annual_merchants, 'Annual', False,
-         'Once-a-year expenses like subscriptions, renewals, or seasonal bills.'),
-        ('periodic', periodic_merchants, 'Periodic', False,
-         'Recurring expenses that happen quarterly or a few times a year.'),
-        ('travel', travel_merchants, 'Travel', False,
-         'Travel-related expenses including flights, hotels, and international purchases.'),
-        ('oneoff', one_off_merchants, 'One-Off', False,
-         'Single or infrequent purchases that don\'t recur regularly.'),
-        ('variable', variable_merchants, 'Variable Spending', True,
-         'Discretionary spending that varies month to month. Avg/Mo shows your typical monthly spend.'),
+        ('monthly', monthly_merchants, 'Every Month', True,
+         'Merchants appearing 6+ months with consistent payment amounts (CV < 0.3).'),
+        ('annual', annual_merchants, 'Once a Year', False,
+         'Yearly expenses like insurance renewals, annual subscriptions, or seasonal bills.'),
+        ('periodic', periodic_merchants, 'A Few Times/Year', False,
+         'Recurring expenses appearing quarterly or seasonally (2-5 times per year).'),
+        ('travel', travel_merchants, 'Travel Expenses', False,
+         'Travel-related purchases including flights, hotels, and out-of-state spending.'),
+        ('oneoff', one_off_merchants, 'Large One-Time', False,
+         'Significant purchases that don\'t recur regularly (single or infrequent).'),
+        ('variable', variable_merchants, 'Varies by Month', True,
+         'Discretionary spending with varying amounts. Shows average monthly cost.'),
     ]
 
     sections = {}
@@ -1399,6 +1444,56 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
                 if txn.get('date', '') > latest_date:
                     latest_date = txn.get('date', '')
 
+    # Build category view - group all merchants by category -> subcategory
+    def build_category_view():
+        # Collect all merchants from all sections
+        all_merchants = {}
+        for section in sections.values():
+            for merchant_id, merchant in section['merchants'].items():
+                all_merchants[merchant_id] = merchant
+
+        # Group by category -> subcategory
+        categories = {}
+        for merchant_id, merchant in all_merchants.items():
+            cat = merchant.get('category', 'Uncategorized') or 'Uncategorized'
+            subcat = merchant.get('subcategory', 'Other') or 'Other'
+
+            # Handle unknown merchants
+            if cat == 'Unknown':
+                cat = 'Uncategorized'
+                subcat = 'Unknown'
+
+            if cat not in categories:
+                categories[cat] = {
+                    'total': 0,
+                    'monthly': 0,
+                    'count': 0,
+                    'subcategories': {}
+                }
+
+            if subcat not in categories[cat]['subcategories']:
+                categories[cat]['subcategories'][subcat] = {
+                    'total': 0,
+                    'monthly': 0,
+                    'count': 0,
+                    'merchants': {}
+                }
+
+            # Add merchant to subcategory
+            categories[cat]['subcategories'][subcat]['merchants'][merchant_id] = merchant
+            categories[cat]['subcategories'][subcat]['total'] += merchant.get('ytd', 0)
+            categories[cat]['subcategories'][subcat]['monthly'] += merchant.get('monthly', 0)
+            categories[cat]['subcategories'][subcat]['count'] += merchant.get('count', 0)
+
+            # Update category totals
+            categories[cat]['total'] += merchant.get('ytd', 0)
+            categories[cat]['monthly'] += merchant.get('monthly', 0)
+            categories[cat]['count'] += merchant.get('count', 0)
+
+        return categories
+
+    category_view = build_category_view()
+
     # Build final spending data object
     spending_data = {
         'year': year,
@@ -1406,7 +1501,8 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
         'homeState': home_state,
         'sources': sources,
         'dataThrough': latest_date,
-        'sections': sections
+        'sections': sections,
+        'categoryView': category_view
     }
 
     # Assemble final HTML

@@ -6,7 +6,7 @@ Loads settings from YAML config files.
 
 import os
 
-from .format_parser import parse_format_string, is_special_parser_type
+from .format_parser import parse_format_string, is_special_parser_type, get_account_type_settings
 
 # Try to import yaml, fall back to simple parsing if not available
 try:
@@ -100,7 +100,7 @@ def load_settings(config_dir, settings_file='settings.yaml'):
         return load_yaml_simple(settings_path)
 
 
-def resolve_source_format(source):
+def resolve_source_format(source, warnings=None):
     """
     Resolve the format specification for a data source.
 
@@ -112,35 +112,78 @@ def resolve_source_format(source):
     - columns.description: Template for combining custom captures
       Example: "{merchant} ({type})" when format uses {type}, {merchant}
 
+    Args:
+        source: Data source configuration dict
+        warnings: Optional list to append deprecation warnings to
+
     Returns the source dict with additional keys:
     - '_parser_type': 'amex', 'boa', or 'generic'
     - '_format_spec': FormatSpec object (for generic parser) or None
     """
     source = source.copy()
+    source_name = source.get('name', 'unknown')
 
     if 'format' in source:
         # Custom format string provided
         format_str = source['format']
+
+        # Check for deprecated {-amount} syntax
+        if '{-amount}' in format_str and warnings is not None:
+            warnings.append({
+                'type': 'deprecated',
+                'source': source_name,
+                'feature': '{-amount}',
+                'message': f"Source '{source_name}' uses deprecated {{-amount}} syntax.",
+                'suggestion': "Use 'account_type: bank' instead, which handles sign negation and filters income.",
+                'example': f"  - name: {source_name}\n    account_type: bank\n    format: \"{format_str.replace('{-amount}', '{amount}')}\"",
+            })
 
         # Check for columns.description template
         columns = source.get('columns', {})
         description_template = columns.get('description') if isinstance(columns, dict) else None
 
         try:
-            source['_format_spec'] = parse_format_string(format_str, description_template)
+            format_spec = parse_format_string(format_str, description_template)
+
+            # Apply account_type preset first (can be overridden by explicit settings)
+            if 'account_type' in source:
+                preset = get_account_type_settings(source['account_type'])
+                format_spec.negate_amount = preset['negate_amount']
+                format_spec.skip_negative = preset['skip_negative']
+
+            # Apply explicit settings (override account_type defaults)
+            if 'delimiter' in source:
+                format_spec.delimiter = source['delimiter']
+            if 'has_header' in source:
+                format_spec.has_header = source['has_header']
+            if 'negate_amount' in source:
+                format_spec.negate_amount = source['negate_amount']
+            if 'skip_negative' in source:
+                format_spec.skip_negative = source['skip_negative']
+
+            source['_format_spec'] = format_spec
             source['_parser_type'] = 'generic'
         except ValueError as e:
-            raise ValueError(f"Invalid format for source '{source.get('name', 'unknown')}': {e}")
+            raise ValueError(f"Invalid format for source '{source_name}': {e}")
 
     elif 'type' in source:
         source_type = source['type'].lower()
 
         if is_special_parser_type(source_type):
-            # Use legacy parser (amex, boa)
+            # Use legacy parser (amex, boa) - add deprecation warning
+            if warnings is not None:
+                warnings.append({
+                    'type': 'deprecated',
+                    'source': source_name,
+                    'feature': f'type: {source_type}',
+                    'message': f"Source '{source_name}' uses deprecated 'type: {source_type}'.",
+                    'suggestion': "Use 'account_type' and 'format' instead for better control.",
+                    'example': f"  - name: {source_name}\n    account_type: credit_card\n    format: \"{{date:%m/%d/%Y}}, {{description}}, {{amount}}\"",
+                })
             source['_parser_type'] = source_type
             source['_format_spec'] = None
         else:
-            raise ValueError(f"Unknown source type: '{source_type}'. Use 'amex', 'boa', or provide a 'format' string.")
+            raise ValueError(f"Unknown source type: '{source_type}'. Use 'account_type' with a 'format' string.")
 
     else:
         raise ValueError(
@@ -169,14 +212,20 @@ def load_config(config_dir, settings_file='settings.yaml'):
     # Load main settings
     config = load_settings(config_dir, settings_file)
 
+    # Collect deprecation warnings
+    warnings = []
+
     # Process data sources to resolve format specs
     if config.get('data_sources'):
         config['data_sources'] = [
-            resolve_source_format(source)
+            resolve_source_format(source, warnings=warnings)
             for source in config['data_sources']
         ]
     else:
         config['data_sources'] = []
+
+    # Store warnings for CLI to display
+    config['_warnings'] = warnings
 
     # Normalize home_locations to a set of uppercase location codes
     # Support legacy home_state for backward compatibility

@@ -448,3 +448,193 @@ class TestTravelClassification:
         for trace in travel_trace:
             assert 'is_travel=false' not in trace, f"Trace should not mention is_travel flag: {trace}"
             assert 'is_travel=true' not in trace, f"Trace should not mention is_travel flag: {trace}"
+
+
+class TestRegexDelimiter:
+    """Tests for regex-based delimiter parsing (for fixed-width formats like BOA)."""
+
+    def test_regex_delimiter_basic(self):
+        """Parse a fixed-width file using regex delimiter."""
+        # BOA-style format: Date  Description  Amount  Balance
+        txt_content = """01/15/2025  GROCERY STORE PURCHASE                          -123.45     1000.00
+01/16/2025  COFFEE SHOP SEATTLE WA                            -5.99      994.01
+01/17/2025  BIG PURCHASE FROM STORE                        -1234.56      -240.55
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        try:
+            f.write(txt_content)
+            f.close()
+
+            rules = get_all_rules()
+            # Regex to capture: date, description, amount (negative only), balance
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {-amount}, {_}')
+            # Only match negative amounts (debits)
+            format_spec.delimiter = r"regex:^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+(-[\d,]+\.\d{2})\s+([-\d,]+\.\d{2})$"
+            format_spec.has_header = False
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 3
+            # Amounts should be positive after negation
+            assert txns[0]['amount'] == 123.45
+            assert txns[1]['amount'] == 5.99
+            assert txns[2]['amount'] == 1234.56
+            # Descriptions should be captured
+            assert 'GROCERY' in txns[0]['raw_description']
+            assert 'COFFEE' in txns[1]['raw_description']
+        finally:
+            os.unlink(f.name)
+
+    def test_regex_delimiter_skips_credits(self):
+        """Regex pattern that only matches debits should skip credits."""
+        txt_content = """01/15/2025  PAYCHECK DIRECT DEPOSIT                        1000.00     2000.00
+01/16/2025  COFFEE SHOP                                        -5.99     1994.01
+01/17/2025  TRANSFER IN                                       500.00     2494.01
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False)
+        try:
+            f.write(txt_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {-amount}, {_}')
+            # Only match negative amounts (debits) - note the - before [\d,]
+            format_spec.delimiter = r"regex:^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+(-[\d,]+\.\d{2})\s+([\d,]+\.\d{2})$"
+            format_spec.has_header = False
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            # Only the debit should be captured
+            assert len(txns) == 1
+            assert txns[0]['amount'] == 5.99
+            assert 'COFFEE' in txns[0]['raw_description']
+        finally:
+            os.unlink(f.name)
+
+    def test_tab_delimiter(self):
+        """Parse a tab-separated file."""
+        tsv_content = "Date\tDescription\tAmount\n01/15/2025\tGROCERY STORE\t123.45\n01/16/2025\tCOFFEE SHOP\t5.99\n"
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.tsv', delete=False)
+        try:
+            f.write(tsv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {amount}')
+            format_spec.delimiter = 'tab'
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+            assert txns[0]['amount'] == 123.45
+            assert txns[1]['amount'] == 5.99
+        finally:
+            os.unlink(f.name)
+
+
+class TestAccountType:
+    """Tests for account_type presets (credit_card, bank, etc.)."""
+
+    def test_account_type_presets_exist(self):
+        """Verify account type presets are defined."""
+        from tally.format_parser import ACCOUNT_TYPE_PRESETS, get_account_type_settings
+
+        assert 'credit_card' in ACCOUNT_TYPE_PRESETS
+        assert 'bank' in ACCOUNT_TYPE_PRESETS
+        assert 'brokerage' in ACCOUNT_TYPE_PRESETS
+
+        # Credit card: no negation, keep refunds
+        cc = get_account_type_settings('credit_card')
+        assert cc['negate_amount'] == False
+        assert cc['skip_negative'] == False
+
+        # Bank: negate amounts, skip income
+        bank = get_account_type_settings('bank')
+        assert bank['negate_amount'] == True
+        assert bank['skip_negative'] == True
+
+    def test_account_type_invalid(self):
+        """Unknown account type raises error."""
+        from tally.format_parser import get_account_type_settings
+
+        with pytest.raises(ValueError) as exc_info:
+            get_account_type_settings('invalid_type')
+        assert 'Unknown account_type' in str(exc_info.value)
+
+    def test_credit_card_keeps_signs(self):
+        """Credit card account type keeps amounts as-is."""
+        csv_content = """Date,Description,Amount
+01/15/2025,PURCHASE,50.00
+01/16/2025,REFUND,-25.00
+01/17/2025,PAYMENT,-500.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {amount}')
+            # Apply credit_card preset
+            format_spec.negate_amount = False
+            format_spec.skip_negative = False
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 3
+            assert txns[0]['amount'] == 50.00   # Purchase: positive
+            assert txns[1]['amount'] == -25.00  # Refund: negative (kept)
+            assert txns[2]['amount'] == -500.00 # Payment: negative (kept)
+        finally:
+            os.unlink(f.name)
+
+    def test_bank_negates_and_skips_income(self):
+        """Bank account type negates amounts and skips income."""
+        csv_content = """Date,Description,Amount
+01/15/2025,GROCERY STORE,-50.00
+01/16/2025,PAYCHECK,2000.00
+01/17/2025,COFFEE,-5.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {amount}')
+            # Apply bank preset
+            format_spec.negate_amount = True
+            format_spec.skip_negative = True
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            # Only debits (negated to positive), income skipped
+            assert len(txns) == 2
+            assert txns[0]['amount'] == 50.00  # -50 negated to +50
+            assert txns[1]['amount'] == 5.00   # -5 negated to +5
+            # Paycheck (2000 negated to -2000) is skipped
+        finally:
+            os.unlink(f.name)
+
+    def test_explicit_settings_override_account_type(self):
+        """Explicit negate_amount/skip_negative override account_type defaults."""
+        from tally.config_loader import resolve_source_format
+
+        source = {
+            'name': 'Test',
+            'file': 'test.csv',
+            'format': '{date}, {description}, {amount}',
+            'account_type': 'bank',  # Would set negate=True, skip=True
+            'skip_negative': False,  # Override: keep income
+        }
+
+        resolved = resolve_source_format(source)
+        spec = resolved['_format_spec']
+
+        assert spec.negate_amount == True   # From account_type
+        assert spec.skip_negative == False  # Overridden

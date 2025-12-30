@@ -81,18 +81,38 @@ currency_format: "€{amount}"  # Optional: €1,234 or "{amount} zł" for 1,234
 data_sources:
   - name: AMEX
     file: data/amex.csv
-    type: amex
+    account_type: credit_card
+    format: "{date:%m/%d/%Y},{description},{amount}"
   - name: Chase
     file: data/chase.csv
+    account_type: credit_card
     format: "{date:%m/%d/%Y},{description},{amount}"
   - name: BofA Checking
     file: data/bofa.csv
-    format: "{date:%m/%d/%Y},{description},{-amount}"
+    account_type: bank
+    format: "{date:%m/%d/%Y},{description},{amount}"
   - name: German Bank
     file: data/german.csv
+    account_type: bank
     format: "{date:%d.%m.%Y},{description},{amount}"
     decimal_separator: ","  # European format (1.234,56)
 ```
+
+### Account Types
+
+Use `account_type` to automatically handle sign conventions:
+
+| Type | Behavior | Use For |
+|------|----------|---------|
+| `credit_card` | Keep signs as-is | Credit cards (charges positive, payments negative) |
+| `bank` | Negate amounts, skip credits | Checking/savings (debits negative, deposits positive) |
+| `brokerage` | Same as bank | Investment accounts |
+
+The `account_type` sets sensible defaults that can be overridden:
+- `negate_amount`: Flip the sign of amounts
+- `skip_negative`: Skip negative amounts after negation (filters income/deposits)
+
+Run `tally inspect <file>` to see suggested account type based on your data.
 
 ### Format Strings
 
@@ -100,10 +120,11 @@ data_sources:
 |-------|-------------|
 | `{date:%m/%d/%Y}` | Date with format |
 | `{description}` | Transaction description |
-| `{amount}` | Amount (positive = expense) |
-| `{-amount}` | Negated amount (for banks where negative = expense) |
+| `{amount}` | Amount column |
 | `{_}` | Skip column |
 | `{custom_name}` | Capture column for use in description template |
+
+> **Note:** Use `account_type` instead of `{-amount}` for sign handling. The `{-amount}` syntax is deprecated.
 
 **Multi-column descriptions** - Some banks split info across columns:
 ```yaml

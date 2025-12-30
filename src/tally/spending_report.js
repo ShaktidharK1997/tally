@@ -23,6 +23,7 @@ createApp({
         const isDarkTheme = ref(true);
         const chartsCollapsed = ref(false);
         const helpCollapsed = ref(true);
+        const currentView = ref('category'); // 'category' or 'pattern'
 
         // Chart refs
         const monthlyChart = ref(null);
@@ -88,6 +89,65 @@ createApp({
 
         // Only sections with visible merchants
         const visibleSections = computed(() => filteredSections.value);
+
+        // Category view with filtering applied
+        const filteredCategoryView = computed(() => {
+            const categoryView = spendingData.value.categoryView || {};
+            const result = {};
+
+            for (const [catName, category] of Object.entries(categoryView)) {
+                const filteredSubcategories = {};
+                let categoryTotal = 0;
+
+                for (const [subcatName, subcat] of Object.entries(category.subcategories || {})) {
+                    const filteredMerchants = {};
+                    let subcatTotal = 0;
+
+                    for (const [merchantId, merchant] of Object.entries(subcat.merchants || {})) {
+                        // Filter transactions
+                        const filteredTxns = (merchant.transactions || []).filter(txn =>
+                            passesFilters(txn, merchant)
+                        );
+
+                        if (filteredTxns.length > 0) {
+                            const filteredTotal = filteredTxns.reduce((sum, t) => sum + t.amount, 0);
+                            const months = new Set(filteredTxns.map(t => t.month));
+
+                            filteredMerchants[merchantId] = {
+                                ...merchant,
+                                filteredTxns,
+                                filteredTotal,
+                                filteredCount: filteredTxns.length,
+                                filteredMonths: months.size
+                            };
+                            subcatTotal += filteredTotal;
+                        }
+                    }
+
+                    if (Object.keys(filteredMerchants).length > 0) {
+                        filteredSubcategories[subcatName] = {
+                            ...subcat,
+                            filteredMerchants,
+                            filteredTotal: subcatTotal
+                        };
+                        categoryTotal += subcatTotal;
+                    }
+                }
+
+                if (Object.keys(filteredSubcategories).length > 0) {
+                    result[catName] = {
+                        ...category,
+                        filteredSubcategories,
+                        filteredTotal: categoryTotal
+                    };
+                }
+            }
+
+            // Sort categories by total descending
+            return Object.fromEntries(
+                Object.entries(result).sort((a, b) => b[1].filteredTotal - a[1].filteredTotal)
+            );
+        });
 
         // Totals per section
         const sectionTotals = computed(() => {
@@ -510,6 +570,18 @@ createApp({
             }
         }
 
+        function setView(view) {
+            currentView.value = view;
+            localStorage.setItem('spending-view', view);
+        }
+
+        function initView() {
+            const saved = localStorage.getItem('spending-view');
+            if (saved === 'pattern' || saved === 'category') {
+                currentView.value = saved;
+            }
+        }
+
         // ========== URL HASH ==========
 
         function filtersToHash() {
@@ -751,6 +823,7 @@ createApp({
 
         onMounted(() => {
             initTheme();
+            initView();
 
             // Wait for next tick to ensure computed properties are ready
             nextTick(() => {
@@ -782,11 +855,12 @@ createApp({
             // State
             activeFilters, expandedMerchants, collapsedSections, searchQuery,
             showAutocomplete, autocompleteIndex, isScrolled, isDarkTheme, chartsCollapsed, helpCollapsed,
+            currentView,
             // Refs
             monthlyChart, categoryPieChart, categoryByMonthChart,
             // Computed
             spendingData, title, subtitle,
-            visibleSections, sectionTotals, grandTotal, monthlyBudget, nonRecurringTotal,
+            visibleSections, filteredCategoryView, sectionTotals, grandTotal, monthlyBudget, nonRecurringTotal,
             monthlyRecurringAvg, variableMonthlyAvg, uncategorizedTotal,
             numFilteredMonths, filteredAutocomplete, availableMonths,
             // Methods
@@ -794,7 +868,7 @@ createApp({
             toggleExpand, toggleSection, sortedMerchants,
             formatCurrency, formatDate, formatMonthLabel, formatPct, filterTypeChar, getLocationClass,
             onSearchInput, onSearchKeydown, selectAutocompleteItem,
-            toggleTheme
+            toggleTheme, setView
         };
     }
 }).mount('#app');

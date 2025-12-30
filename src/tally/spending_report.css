@@ -528,6 +528,101 @@ section.annual-section .section-header h2 { color: var(--accent-yellow); }
 section.travel-section .section-header h2 { color: var(--accent-pink); }
 section.oneoff-section .section-header h2 { color: var(--accent-pink-dark); }
 section.variable-section .section-header h2 { color: var(--accent-cyan); }
+section.category-section .section-header h2 { color: var(--accent-blue); }
+
+/* View Toggle */
+.view-toggle {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    justify-content: center;
+}
+.view-toggle button {
+    padding: 0.5rem 1.25rem;
+    border: 1px solid var(--border-medium);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.view-toggle button:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+.view-toggle button.active {
+    background: var(--accent-blue);
+    color: white;
+    border-color: var(--accent-blue);
+}
+
+/* Subcategory Styles */
+.subcategory-group {
+    margin-left: 1.5rem;
+    margin-bottom: 1rem;
+}
+.subcategory-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-radius: 8px;
+    background: var(--bg-card);
+    margin-bottom: 0.5rem;
+    transition: background 0.2s;
+}
+.subcategory-header:hover {
+    background: var(--bg-card-hover);
+}
+.subcategory-header h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.subcategory-header .toggle {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.subcategory-name.clickable {
+    cursor: pointer;
+}
+.subcategory-name.clickable:hover {
+    color: var(--accent-blue);
+    text-decoration: underline;
+}
+.subcategory-total {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+.subcategory-monthly {
+    color: var(--accent-blue);
+}
+.subcategory-ytd {
+    color: var(--text-primary);
+}
+.subcategory-pct {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+.subcategory-content {
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, opacity 0.2s ease-out;
+    max-height: 3000px;
+    opacity: 1;
+}
+.subcategory-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+}
+.subcategory-content .table-wrapper {
+    margin-left: 0.5rem;
+}
+
 .section-content {
     overflow: hidden;
     transition: max-height 0.4s ease-out, opacity 0.3s ease-out;
