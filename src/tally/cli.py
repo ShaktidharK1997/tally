@@ -505,15 +505,16 @@ def cmd_init(args):
 
   {C.BOLD}1.{C.RESET} Drop your bank/credit card exports into {C.CYAN}{rel_data}{C.RESET}
 
-  {C.BOLD}2.{C.RESET} Configure your data sources in {C.CYAN}{rel_settings}{C.RESET}
-
-  {C.BOLD}3.{C.RESET} Open this folder in an AI coding agent:
+  {C.BOLD}2.{C.RESET} Open this folder in an AI coding agent:
 {agents_block}
      {C.DIM}Or any agent that can run command-line tools.{C.RESET}
 
-  {C.BOLD}4.{C.RESET} Run {C.GREEN}tally workflow{C.RESET} to see context-aware next steps
+  {C.BOLD}3.{C.RESET} Tell the agent what to do:
+     {C.DIM}• "Configure my Chase credit card CSV for tally"
+     • "Run tally and categorize all my transactions"
+     • "Generate my spending report"{C.RESET}
 
-{C.DIM}The agent can run tally workflow at any time to see what to do next.{C.RESET}
+{C.DIM}The agent can run {C.RESET}{C.GREEN}tally workflow{C.RESET}{C.DIM} at any time to see context-aware instructions.{C.RESET}
 """)
 
 
