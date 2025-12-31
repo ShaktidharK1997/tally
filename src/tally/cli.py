@@ -98,6 +98,55 @@ from .analyzer import (
 )
 
 
+def _migrate_csv_to_rules(csv_file: str, config_dir: str, backup: bool = True) -> bool:
+    """
+    Migrate merchant_categories.csv to merchants.rules format.
+
+    Args:
+        csv_file: Path to the CSV file
+        config_dir: Path to config directory
+        backup: Whether to rename old CSV to .bak
+
+    Returns:
+        True if migration was successful
+    """
+    from .merchant_engine import csv_to_merchants_content
+    from .merchant_utils import load_merchant_rules
+    import shutil
+
+    try:
+        # Load and convert
+        csv_rules = load_merchant_rules(csv_file)
+        content = csv_to_merchants_content(csv_rules)
+
+        # Write new file
+        new_file = os.path.join(config_dir, 'merchants.rules')
+        with open(new_file, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"  {C.GREEN}✓{C.RESET} config/merchants.rules (converted {len(csv_rules)} rules)")
+
+        # Backup old file
+        if backup and os.path.exists(csv_file):
+            shutil.move(csv_file, csv_file + '.bak')
+            print(f"  {C.DIM}→ merchant_categories.csv renamed to .bak{C.RESET}")
+
+        # Update settings.yaml to reference new file
+        settings_path = os.path.join(config_dir, 'settings.yaml')
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            if 'merchants_file:' not in content:
+                with open(settings_path, 'a', encoding='utf-8') as f:
+                    f.write('\n# Merchant rules file (migrated from CSV)\n')
+                    f.write('merchants_file: config/merchants.rules\n')
+                print(f"  {C.GREEN}✓{C.RESET} config/settings.yaml (updated)")
+
+        return True
+    except Exception as e:
+        print(f"  {C.RED}✗{C.RESET} Migration failed: {e}")
+        return False
+
+
 def _check_merchant_migration(config: dict, config_dir: str, quiet: bool = False, migrate: bool = False) -> list:
     """
     Check if merchant rules should be migrated from CSV to .rules format.
@@ -153,27 +202,13 @@ def _check_merchant_migration(config: dict, config_dir: str, quiet: bool = False
             print()
 
         if should_migrate:
-            # Perform migration
-            from .merchant_engine import csv_to_merchants_content
-
-            # Generate .rules content
-            content = csv_to_merchants_content(csv_rules)
-
-            # Write new file next to settings.yaml
-            new_file = os.path.join(config_dir, 'merchants.rules')
-            try:
-                with open(new_file, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                print(f"{C.GREEN}✓ Created {new_file}{C.RESET}")
+            # Perform migration using shared helper
+            print()
+            if _migrate_csv_to_rules(merchants_file, config_dir, backup=True):
                 print()
-                print(f"   {C.DIM}Add to settings.yaml:{C.RESET}")
-                print(f"   {C.CYAN}merchants_file: config/merchants.rules{C.RESET}")
-                print()
-                print(f"   {C.DIM}Then you can delete merchant_categories.csv{C.RESET}")
-                print()
-            except IOError as e:
-                print(f"{C.YELLOW}   Could not write file: {e}{C.RESET}", file=sys.stderr)
-                print(f"   {C.DIM}Continuing with CSV format...{C.RESET}")
+                # Return new rules from migrated file
+                new_file = os.path.join(config_dir, 'merchants.rules')
+                return get_all_rules(new_file)
 
         # Continue with CSV format for this run (backwards compatible)
         if not quiet:
@@ -729,7 +764,17 @@ output/
 
 def cmd_init(args):
     """Handle the 'init' subcommand."""
-    target_dir = os.path.abspath(args.dir)
+    import shutil
+
+    # Check if we're already in a tally directory (has config/)
+    # If user didn't explicitly specify a directory, use current dir instead of ./tally/
+    if args.dir == 'tally' and os.path.isdir('./config'):
+        target_dir = os.path.abspath('.')
+        print(f"{C.YELLOW}Note:{C.RESET} Found existing config/ directory, initializing here instead of ./tally/")
+        print()
+    else:
+        target_dir = os.path.abspath(args.dir)
+
     # Use relative paths for display
     rel_target = os.path.relpath(target_dir)
     if rel_target == '.':
@@ -738,7 +783,46 @@ def cmd_init(args):
     print(f"Initializing budget directory: {C.BOLD}{rel_target}{C.RESET}")
     print()
 
+    # Check for old merchant_categories.csv BEFORE init_config creates new files
+    config_dir = os.path.join(target_dir, 'config')
+    old_csv = os.path.join(config_dir, 'merchant_categories.csv')
+    new_rules = os.path.join(config_dir, 'merchants.rules')
+
+    if os.path.exists(old_csv) and not os.path.exists(new_rules):
+        # Check if CSV has actual rules (not just header/comments)
+        has_rules = False
+        try:
+            with open(old_csv, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and not line.startswith('Pattern,'):
+                        has_rules = True
+                        break
+        except Exception:
+            pass
+
+        if has_rules:
+            print(f"{C.YELLOW}Found legacy merchant_categories.csv with rules.{C.RESET}")
+            print(f"Converting to new merchants.rules format...")
+            _migrate_csv_to_rules(old_csv, config_dir, backup=True)
+            print()
+
     created, skipped = init_config(target_dir)
+
+    # Update settings.yaml to add views_file if missing
+    settings_path = os.path.join(config_dir, 'settings.yaml')
+    views_rules = os.path.join(config_dir, 'views.rules')
+    if os.path.exists(settings_path) and os.path.exists(views_rules):
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            if 'views_file:' not in content:
+                with open(settings_path, 'a', encoding='utf-8') as f:
+                    f.write('\n# Views file (custom spending views)\n')
+                    f.write('views_file: config/views.rules\n')
+                print(f"  {C.GREEN}✓{C.RESET} config/settings.yaml (added views_file)")
+        except Exception:
+            pass
 
     # Show each file with its status
     all_files = [(f, True) for f in created] + [(f, False) for f in skipped]
