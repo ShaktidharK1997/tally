@@ -2305,7 +2305,7 @@ def cmd_workflow(args):
         print(f"    {C.DIM}3.{C.RESET} Check progress:")
         print(f"       {C.GREEN}tally run --summary{C.RESET}")
         print()
-        print(f"    {C.DIM}Repeat until all merchants are categorized{C.RESET}")
+        print(f"    {C.YELLOW}Keep going until ALL unknown merchants are resolved!{C.RESET}")
 
     section("Commands")
     cmds = [
