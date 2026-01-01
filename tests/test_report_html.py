@@ -187,6 +187,41 @@ class TestUINavigation:
         page.goto(f"file://{report_path}")
         expect(page.get_by_test_id("theme-toggle")).to_be_visible()
 
+    def test_tag_badges_have_distinct_colors(self, page: Page, report_path):
+        """Different tags have different colors assigned."""
+        page.goto(f"file://{report_path}")
+        # Get David and Sarah tag badges
+        david_badge = page.get_by_test_id("tag-badge").filter(has_text="David").first
+        sarah_badge = page.get_by_test_id("tag-badge").filter(has_text="Sarah").first
+
+        # Both badges should be visible
+        expect(david_badge).to_be_visible()
+        expect(sarah_badge).to_be_visible()
+
+        # Get computed colors
+        david_color = david_badge.evaluate("el => getComputedStyle(el).color")
+        sarah_color = sarah_badge.evaluate("el => getComputedStyle(el).color")
+
+        # Colors should be set (not default/black)
+        assert david_color != "rgb(0, 0, 0)", "David tag should have a color"
+        assert sarah_color != "rgb(0, 0, 0)", "Sarah tag should have a color"
+
+        # Different tags should have different colors
+        assert david_color != sarah_color, "Different tags should have different colors"
+
+    def test_same_tag_has_consistent_color(self, page: Page, report_path):
+        """Same tag has the same color across different merchants."""
+        page.goto(f"file://{report_path}")
+        # Get all David tag badges
+        david_badges = page.get_by_test_id("tag-badge").filter(has_text="David").all()
+
+        # Should have multiple David badges (across merchants)
+        assert len(david_badges) >= 2, "Should have multiple David tags"
+
+        # All David badges should have the same color
+        colors = [badge.evaluate("el => getComputedStyle(el).color") for badge in david_badges]
+        assert all(c == colors[0] for c in colors), "Same tag should have consistent color"
+
 
 # =============================================================================
 # Category 2: Calculation/Data Accuracy Tests
