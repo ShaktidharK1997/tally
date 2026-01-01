@@ -94,10 +94,46 @@ const MerchantSection = defineComponent({
                                     @click="toggleExpand(item.id || idx)">
                                     <td class="merchant" :class="{ clickable: categoryMode }">
                                         <span class="chevron">{{ isExpanded(item.id || idx) ? '▼' : '▶' }}</span>
-                                        <span v-if="categoryMode" @click.stop="addFilter(item.id, 'merchant', item.displayName)">
+                                        <span class="merchant-name" @click.stop="categoryMode ? addFilter(item.id, 'merchant', item.displayName) : null">
                                             {{ item.displayName || item.merchant }}
                                         </span>
-                                        <span v-else>{{ item.displayName || item.merchant }}</span>
+                                        <span v-if="item.matchInfo || item.viewInfo" class="match-info-trigger"
+                                                      @click.stop="togglePopup($event)">info
+                                            <span class="match-info-popup" ref="popup">
+                                                <button class="popup-close" @click="closePopup($event)">&times;</button>
+                                                <div class="popup-header">Why This Matched</div>
+                                                <template v-if="item.matchInfo">
+                                                    <div v-if="item.matchInfo.explanation" class="popup-explanation">{{ item.matchInfo.explanation }}</div>
+                                                    <div class="popup-section">
+                                                        <div class="popup-section-header">Merchant Pattern</div>
+                                                        <div class="popup-code">{{ item.matchInfo.pattern }}</div>
+                                                    </div>
+                                                    <div class="popup-section">
+                                                        <div class="popup-section-header">Assigned To</div>
+                                                        <div class="popup-row">
+                                                            <span class="popup-label">Merchant:</span>
+                                                            <span class="popup-value">{{ item.matchInfo.assignedMerchant }}</span>
+                                                        </div>
+                                                        <div class="popup-row">
+                                                            <span class="popup-label">Category:</span>
+                                                            <span class="popup-value">{{ item.matchInfo.assignedCategory }} / {{ item.matchInfo.assignedSubcategory }}</span>
+                                                        </div>
+                                                        <div v-if="item.matchInfo.assignedTags && item.matchInfo.assignedTags.length" class="popup-row">
+                                                            <span class="popup-label">Tags:</span>
+                                                            <span class="popup-value">{{ item.matchInfo.assignedTags.join(', ') }}</span>
+                                                        </div>
+                                                    </div>
+                                                </template>
+                                                <template v-if="item.viewInfo && item.viewInfo.filterExpr">
+                                                    <div class="popup-section">
+                                                        <div class="popup-section-header">View Filter ({{ item.viewInfo.viewName }})</div>
+                                                        <div v-if="item.viewInfo.explanation" class="popup-explanation" style="margin-top: 0.3em;">{{ item.viewInfo.explanation }}</div>
+                                                        <div class="popup-code">{{ item.viewInfo.filterExpr }}</div>
+                                                    </div>
+                                                </template>
+                                                <div v-if="item.matchInfo" class="popup-source">From: {{ item.matchInfo.source === 'user' ? 'merchants.rules' : item.matchInfo.source }}</div>
+                                            </span>
+                                        </span>
                                     </td>
                                     <td class="category" :class="{ clickable: categoryMode }"
                                         @click.stop="categoryMode && addFilter(item.subcategory, 'category')">
@@ -173,6 +209,31 @@ const MerchantSection = defineComponent({
         isExpanded(id) {
             return this.expandedItems.has(id);
         },
+        togglePopup(event) {
+            const icon = event.currentTarget;
+            const popup = icon.querySelector('.match-info-popup');
+            if (!popup) return;
+
+            // Close any other open popups first
+            document.querySelectorAll('.match-info-popup.visible').forEach(p => {
+                if (p !== popup) p.classList.remove('visible');
+            });
+
+            if (popup.classList.contains('visible')) {
+                popup.classList.remove('visible');
+            } else {
+                // Center in viewport
+                popup.style.left = '50%';
+                popup.style.top = '50%';
+                popup.style.transform = 'translate(-50%, -50%)';
+                popup.classList.add('visible');
+            }
+        },
+        closePopup(event) {
+            event.stopPropagation();
+            const popup = event.currentTarget.closest('.match-info-popup');
+            if (popup) popup.classList.remove('visible');
+        },
         getTags(item) {
             if (item.filteredTxns) {
                 return [...new Set(item.filteredTxns.flatMap(t => t.tags || []))];
@@ -217,6 +278,18 @@ const MerchantSection = defineComponent({
                 return '+' + this.formatCurrency(Math.abs(txn.amount));
             }
             return this.formatCurrency(txn.amount);
+        },
+        getMatchTooltip(item) {
+            const matchInfo = item.matchInfo;
+            if (!matchInfo) return '';
+            const parts = [];
+            if (matchInfo.pattern) {
+                parts.push(`Pattern: ${matchInfo.pattern}`);
+            }
+            if (matchInfo.source) {
+                parts.push(`Source: ${matchInfo.source}`);
+            }
+            return parts.join('\n');
         }
     }
 });
@@ -1428,6 +1501,12 @@ createApp({
                 if (!e.target.closest('.autocomplete-container')) {
                     showAutocomplete.value = false;
                     autocompleteIndex.value = -1;
+                }
+                // Close match-info popups on outside click
+                if (!e.target.closest('.match-info-trigger') && !e.target.closest('.match-info-popup')) {
+                    document.querySelectorAll('.match-info-popup.visible').forEach(p => {
+                        p.classList.remove('visible');
+                    });
                 }
             });
 

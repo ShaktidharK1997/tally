@@ -1360,6 +1360,129 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
     # Get number of months for averaging
     num_months = stats['num_months']
 
+    # Helper to explain a pattern in human-readable form
+    def _explain_pattern(pattern):
+        """Convert a regex/expression pattern to human-readable explanation."""
+        if not pattern:
+            return ''
+
+        # Handle expression-style patterns (contains, startswith, etc.)
+        if 'contains(' in pattern.lower():
+            import re
+            match = re.search(r'contains\(["\']([^"\']+)["\']\)', pattern, re.IGNORECASE)
+            if match:
+                return f'Description contains "{match.group(1)}"'
+
+        if 'startswith(' in pattern.lower():
+            import re
+            match = re.search(r'startswith\(["\']([^"\']+)["\']\)', pattern, re.IGNORECASE)
+            if match:
+                return f'Description starts with "{match.group(1)}"'
+
+        if 'anyof(' in pattern.lower():
+            import re
+            match = re.search(r'anyof\(([^)]+)\)', pattern, re.IGNORECASE)
+            if match:
+                terms = [t.strip().strip('"\'') for t in match.group(1).split(',')]
+                if len(terms) <= 3:
+                    return f'Description contains any of: {", ".join(terms)}'
+                return f'Description contains any of: {", ".join(terms[:3])}...'
+
+        # Handle regex patterns
+        parts = []
+
+        # Check for alternation (OR)
+        if '|' in pattern and not pattern.startswith('('):
+            alternatives = pattern.split('|')
+            if len(alternatives) <= 3:
+                terms = [a.replace('.*', ' ... ').replace('\\s', ' ').strip() for a in alternatives]
+                return f'Matches: {" OR ".join(terms)}'
+            else:
+                terms = [a.replace('.*', ' ... ').replace('\\s', ' ').strip() for a in alternatives[:3]]
+                return f'Matches: {" OR ".join(terms)} (+ {len(alternatives) - 3} more)'
+
+        # Check for start anchor
+        if pattern.startswith('^'):
+            pattern = pattern[1:]
+            parts.append('Starts with')
+        else:
+            parts.append('Contains')
+
+        # Check for end anchor
+        end_anchor = pattern.endswith('$')
+        if end_anchor:
+            pattern = pattern[:-1]
+
+        # Clean up common regex syntax for display
+        display = pattern
+        display = display.replace('.*', ' ... ')
+        display = display.replace('.+', ' ... ')
+        display = display.replace('\\s+', ' ')
+        display = display.replace('\\s', ' ')
+        display = display.replace('\\d+', '#')
+        display = display.replace('\\d', '#')
+        display = display.replace('(?!', ' (not followed by ')
+        display = display.replace('(?:', '(')
+        display = display.replace(')', ')')
+
+        parts.append(f'"{display.strip()}"')
+
+        if end_anchor:
+            parts.append('at end')
+
+        return ' '.join(parts)
+
+    # Helper to explain a view filter expression
+    def _explain_view_filter(filter_expr):
+        """Convert a view filter expression to human-readable explanation."""
+        if not filter_expr:
+            return ''
+
+        explanations = []
+
+        # Parse common conditions
+        if 'category ==' in filter_expr.lower() or "category='" in filter_expr.lower():
+            import re
+            match = re.search(r'category\s*==?\s*["\']([^"\']+)["\']', filter_expr, re.IGNORECASE)
+            if match:
+                explanations.append(f'Category is "{match.group(1)}"')
+
+        if 'subcategory ==' in filter_expr.lower() or "subcategory='" in filter_expr.lower():
+            import re
+            match = re.search(r'subcategory\s*==?\s*["\']([^"\']+)["\']', filter_expr, re.IGNORECASE)
+            if match:
+                explanations.append(f'Subcategory is "{match.group(1)}"')
+
+        if 'tag(' in filter_expr.lower() or 'has_tag(' in filter_expr.lower():
+            import re
+            matches = re.findall(r'(?:tag|has_tag)\(["\']([^"\']+)["\']\)', filter_expr, re.IGNORECASE)
+            for tag in matches:
+                explanations.append(f'Has tag "{tag}"')
+
+        if 'months >' in filter_expr or 'months>=' in filter_expr:
+            import re
+            match = re.search(r'months\s*>=?\s*(\d+)', filter_expr)
+            if match:
+                explanations.append(f'Active {match.group(1)}+ months')
+
+        if 'total >' in filter_expr or 'total>=' in filter_expr:
+            import re
+            match = re.search(r'total\s*>=?\s*(\d+)', filter_expr)
+            if match:
+                explanations.append(f'Total ≥ ${match.group(1)}')
+
+        if 'cv <' in filter_expr or 'cv<=' in filter_expr:
+            import re
+            match = re.search(r'cv\s*<=?\s*([\d.]+)', filter_expr)
+            if match:
+                explanations.append(f'Coefficient of variation ≤ {match.group(1)}')
+
+        if explanations:
+            return ' AND '.join(explanations)
+
+        # Fallback: return cleaned up version of expression
+        return filter_expr.replace('==', '=').replace('&&', ' and ').replace('||', ' or ')
+
     # Helper function to create merchant IDs
     def make_merchant_id(name):
         return name.replace("'", "").replace('"', '').replace(' ', '_')
@@ -1384,6 +1507,21 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
                     'tags': txn.get('tags', [])
                 })
 
+            # Build match info for tooltip
+            match_info = data.get('match_info')
+            match_info_json = None
+            if match_info:
+                pattern = match_info.get('pattern', '')
+                match_info_json = {
+                    'pattern': pattern,
+                    'source': match_info.get('source', ''),
+                    'explanation': _explain_pattern(pattern),
+                    'assignedMerchant': merchant_name,
+                    'assignedCategory': data.get('category', ''),
+                    'assignedSubcategory': data.get('subcategory', ''),
+                    'assignedTags': sorted(match_info.get('tags', [])),
+                }
+
             merchants[merchant_id] = {
                 'id': merchant_id,
                 'displayName': merchant_name,
@@ -1398,6 +1536,7 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
                 'count': data.get('count', len(txns)),
                 'transactions': txns,
                 'tags': sorted(data.get('tags', set())),  # Convert set to sorted list
+                'matchInfo': match_info_json,  # Pattern/source for explain tooltip
             }
         return merchants
 
@@ -1407,11 +1546,13 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
     user_sections = stats.get('sections')
     sections_config = stats.get('_sections_config')
 
-    # Build a lookup for section descriptions from config
+    # Build lookups for section descriptions and filters from config
     section_descriptions = {}
+    section_filters = {}
     if sections_config:
         for section in sections_config.sections:
             section_descriptions[section.name] = section.description
+            section_filters[section.name] = section.filter_expr
 
     if user_sections:
         for section_name, section_data in user_sections.items():
@@ -1424,6 +1565,15 @@ def write_summary_file_vue(stats, filepath, year=2025, home_locations=None, curr
             # Convert list of (name, data) tuples to dict format
             merchant_dict = {name: data for name, data in merchants_list}
             merchants = build_section_merchants(merchant_dict)
+
+            # Add view info to each merchant
+            view_filter = section_filters.get(section_name, '')
+            for merchant_id, merchant in merchants.items():
+                merchant['viewInfo'] = {
+                    'viewName': section_name,
+                    'filterExpr': view_filter,
+                    'explanation': _explain_view_filter(view_filter) if view_filter else '',
+                }
 
             if merchants:
                 # Use description from config, or empty string if not set
