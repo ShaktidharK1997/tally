@@ -177,7 +177,7 @@ def parse_amex(filepath, rules, home_locations=None, cleaning_patterns=None):
                 date = datetime.strptime(row['Date'], '%m/%d/%Y')
                 merchant, category, subcategory, match_info = normalize_merchant(
                     row['Description'], rules, amount=amount, txn_date=date.date(),
-                    cleaning_patterns=cleaning_patterns
+                    cleaning_patterns=cleaning_patterns, data_source='AMEX',
                 )
                 location = extract_location(row['Description'])
 
@@ -229,7 +229,7 @@ def parse_boa(filepath, rules, home_locations=None, cleaning_patterns=None):
 
                 merchant, category, subcategory, match_info = normalize_merchant(
                     description, rules, amount=amount, txn_date=date.date(),
-                    cleaning_patterns=cleaning_patterns
+                    cleaning_patterns=cleaning_patterns, data_source='BOA',
                 )
                 location = extract_location(description)
 
@@ -341,12 +341,13 @@ def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_
             amount_str = row[format_spec.amount_column].strip()
 
             # Build description from either mode
+            # Also capture custom fields for use in rule expressions (field.name)
+            captures = {}
             if format_spec.description_column is not None:
                 # Mode 1: Simple {description}
                 description = row[format_spec.description_column].strip()
             else:
                 # Mode 2: Custom captures + template
-                captures = {}
                 for name, col_idx in format_spec.custom_captures.items():
                     captures[name] = row[col_idx].strip() if col_idx < len(row) else ''
                 description = format_spec.description_template.format(**captures)
@@ -390,7 +391,9 @@ def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_
             # Normalize merchant
             merchant, category, subcategory, match_info = normalize_merchant(
                 description, rules, amount=amount, txn_date=date.date(),
-                cleaning_patterns=cleaning_patterns
+                cleaning_patterns=cleaning_patterns,
+                field=captures if captures else None,
+                data_source=format_spec.source_name or source_name,
             )
 
             transactions.append({
@@ -408,6 +411,7 @@ def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_
                 'match_info': match_info,
                 'tags': match_info.get('tags', []) if match_info else [],
                 'excluded': None,  # No auto-exclusion; use rules to categorize
+                'field': captures if captures else None,  # Custom CSV captures for rule expressions
             })
 
         except (ValueError, IndexError):

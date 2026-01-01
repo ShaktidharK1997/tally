@@ -137,6 +137,8 @@ class TransactionContext:
     - month: Month number 1-12
     - year: Year (e.g., 2025)
     - day: Day of month 1-31
+    - field: Custom fields captured from CSV format string (dict)
+    - source: Data source name (string)
     """
 
     def __init__(
@@ -145,11 +147,15 @@ class TransactionContext:
         amount: float = 0.0,
         date: Optional[date_type] = None,
         variables: Optional[Dict[str, Any]] = None,
+        field: Optional[Dict[str, str]] = None,
+        source: Optional[str] = None,
     ):
         self.description = description
         self.amount = amount  # Preserve sign - use abs(amount) in rules if needed
         self.date = date
         self.variables = variables or {}
+        self.field = field  # Custom captures from CSV format string (None if not available)
+        self.source = source or ""  # Data source name (e.g., "Amex", "Chase")
 
         # Extract date components
         if date:
@@ -171,63 +177,219 @@ class TransactionContext:
             'fuzzy': self._fn_fuzzy,
             'abs': abs,
             'round': round,
+            # Extraction functions
+            'extract': self._fn_extract,
+            'split': self._fn_split,
+            'substring': self._fn_substring,
+            'trim': self._fn_trim,
+            # exists() is handled specially in TransactionEvaluator._eval_Call
         }
 
-    def _fn_contains(self, pattern: str) -> bool:
-        """Check if description contains pattern (case-insensitive)."""
-        return pattern.upper() in self.description.upper()
+    def _fn_contains(self, *args) -> bool:
+        """Check if text contains pattern (case-insensitive).
 
-    def _fn_regex(self, pattern: str) -> bool:
-        """Check if description matches regex pattern (case-insensitive)."""
+        Usage:
+            contains("AMAZON")           # Search description
+            contains(field.memo, "REF")  # Search custom field
+        """
+        if len(args) == 1:
+            text, pattern = self.description, args[0]
+        elif len(args) == 2:
+            text, pattern = args[0], args[1]
+        else:
+            raise ExpressionError("contains() requires 1 or 2 arguments: contains(pattern) or contains(text, pattern)")
+        return pattern.upper() in text.upper()
+
+    def _fn_regex(self, *args) -> bool:
+        """Check if text matches regex pattern (case-insensitive).
+
+        Usage:
+            regex(r'UBER(?!.*EATS)')       # Search description
+            regex(field.code, r'^ACH-')    # Search custom field
+        """
+        if len(args) == 1:
+            text, pattern = self.description, args[0]
+        elif len(args) == 2:
+            text, pattern = args[0], args[1]
+        else:
+            raise ExpressionError("regex() requires 1 or 2 arguments: regex(pattern) or regex(text, pattern)")
         try:
-            return bool(re.search(pattern, self.description, re.IGNORECASE))
+            return bool(re.search(pattern, text, re.IGNORECASE))
         except re.error as e:
             raise ExpressionError(f"Invalid regex pattern: {e}")
 
-    def _fn_normalized(self, pattern: str) -> bool:
-        """
-        Check if description contains pattern after normalizing both.
+    def _fn_normalized(self, *args) -> bool:
+        """Check if text contains pattern after normalizing both.
+
         Normalization removes spaces, hyphens, apostrophes, and other punctuation.
         Useful for matching variations like 'UBER EATS' vs 'UBEREATS'.
+
+        Usage:
+            normalized("UBEREATS")                 # Search description
+            normalized(field.name, "WHOLEFOODS")   # Search custom field
         """
+        if len(args) == 1:
+            text, pattern = self.description, args[0]
+        elif len(args) == 2:
+            text, pattern = args[0], args[1]
+        else:
+            raise ExpressionError("normalized() requires 1 or 2 arguments: normalized(pattern) or normalized(text, pattern)")
+
         def normalize(s: str) -> str:
             # Remove spaces, hyphens, apostrophes, periods, asterisks
             return re.sub(r"[\s\-'.*]+", '', s.upper())
-        return normalize(pattern) in normalize(self.description)
+        return normalize(pattern) in normalize(text)
 
     def _fn_anyof(self, *patterns: str) -> bool:
-        """
-        Check if description contains any of the given patterns (case-insensitive).
+        """Check if description contains any of the given patterns (case-insensitive).
+
         Cleaner syntax for: contains("A") or contains("B") or contains("C")
+        Note: This function only works on description (not custom fields).
         """
         desc_upper = self.description.upper()
         return any(p.upper() in desc_upper for p in patterns)
 
-    def _fn_startswith(self, pattern: str) -> bool:
-        """
-        Check if description starts with pattern (case-insensitive).
-        Useful for prefix matching without catching mid-string matches.
-        """
-        return self.description.upper().startswith(pattern.upper())
+    def _fn_startswith(self, *args) -> bool:
+        """Check if text starts with pattern (case-insensitive).
 
-    def _fn_fuzzy(self, pattern: str, threshold: float = 0.80) -> bool:
+        Useful for prefix matching without catching mid-string matches.
+
+        Usage:
+            startswith("AMZN")               # Check description
+            startswith(field.vendor, "COST") # Check custom field
         """
-        Check if description is similar to pattern using fuzzy matching.
+        if len(args) == 1:
+            text, pattern = self.description, args[0]
+        elif len(args) == 2:
+            text, pattern = args[0], args[1]
+        else:
+            raise ExpressionError("startswith() requires 1 or 2 arguments: startswith(pattern) or startswith(text, pattern)")
+        return text.upper().startswith(pattern.upper())
+
+    def _fn_fuzzy(self, *args) -> bool:
+        """Check if text is similar to pattern using fuzzy matching.
+
         Useful for catching typos like 'MARKEPLACE' vs 'MARKETPLACE'.
         Threshold is similarity ratio (0.0 to 1.0), default 0.80.
+
+        Usage:
+            fuzzy("STARBUCKS")                     # Search description
+            fuzzy(field.vendor, "STARBCKS", 0.75)  # Search custom field with threshold
         """
         from difflib import SequenceMatcher
-        desc_upper = self.description.upper()
+
+        # Parse arguments: fuzzy(pattern), fuzzy(pattern, threshold),
+        # fuzzy(text, pattern), or fuzzy(text, pattern, threshold)
+        if len(args) == 1:
+            text, pattern, threshold = self.description, args[0], 0.80
+        elif len(args) == 2:
+            if isinstance(args[1], (int, float)):
+                # fuzzy(pattern, threshold)
+                text, pattern, threshold = self.description, args[0], args[1]
+            else:
+                # fuzzy(text, pattern)
+                text, pattern, threshold = args[0], args[1], 0.80
+        elif len(args) == 3:
+            text, pattern, threshold = args[0], args[1], args[2]
+        else:
+            raise ExpressionError("fuzzy() requires 1-3 arguments: fuzzy(pattern), fuzzy(text, pattern), or fuzzy(text, pattern, threshold)")
+
+        text_upper = text.upper()
         pattern_upper = pattern.upper()
         # Check if pattern appears as substring with fuzzy match
-        # Slide a window of pattern length across description
-        if len(pattern_upper) > len(desc_upper):
-            return SequenceMatcher(None, desc_upper, pattern_upper).ratio() >= threshold
-        for i in range(len(desc_upper) - len(pattern_upper) + 1):
-            window = desc_upper[i:i + len(pattern_upper)]
+        # Slide a window of pattern length across text
+        if len(pattern_upper) > len(text_upper):
+            return SequenceMatcher(None, text_upper, pattern_upper).ratio() >= threshold
+        for i in range(len(text_upper) - len(pattern_upper) + 1):
+            window = text_upper[i:i + len(pattern_upper)]
             if SequenceMatcher(None, window, pattern_upper).ratio() >= threshold:
                 return True
         return False
+
+    # Extraction functions
+
+    def _fn_extract(self, *args) -> str:
+        """Extract first regex capture group from text.
+
+        Returns empty string if no match or no capture group.
+
+        Usage:
+            extract(r'REF:(\\d+)')              # From description
+            extract(field.memo, r'#(\\d+)')     # From custom field
+        """
+        if len(args) == 1:
+            text, pattern = self.description, args[0]
+        elif len(args) == 2:
+            text, pattern = args[0], args[1]
+        else:
+            raise ExpressionError("extract() requires 1 or 2 arguments: extract(pattern) or extract(text, pattern)")
+
+        try:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match and match.groups():
+                return match.group(1)
+            return ''
+        except re.error as e:
+            raise ExpressionError(f"Invalid regex pattern in extract(): {e}")
+
+    def _fn_split(self, *args) -> str:
+        """Split text and return element at index.
+
+        Returns empty string if index is out of bounds.
+
+        Usage:
+            split("-", 0)               # First element from description
+            split(field.code, "-", 1)   # Second element from custom field
+        """
+        if len(args) == 2:
+            text, delimiter, index = self.description, args[0], args[1]
+        elif len(args) == 3:
+            text, delimiter, index = args[0], args[1], args[2]
+        else:
+            raise ExpressionError("split() requires 2 or 3 arguments: split(delim, index) or split(text, delim, index)")
+
+        if not isinstance(index, int):
+            raise ExpressionError(f"split() index must be an integer, got: {type(index).__name__}")
+
+        parts = text.split(delimiter)
+        if 0 <= index < len(parts):
+            return parts[index].strip()
+        return ''
+
+    def _fn_substring(self, *args) -> str:
+        """Extract substring from text by position.
+
+        Returns partial string if end is beyond text length.
+
+        Usage:
+            substring(0, 4)               # First 4 chars from description
+            substring(field.code, 0, 3)   # First 3 chars from custom field
+        """
+        if len(args) == 2:
+            text, start, end = self.description, args[0], args[1]
+        elif len(args) == 3:
+            text, start, end = args[0], args[1], args[2]
+        else:
+            raise ExpressionError("substring() requires 2 or 3 arguments: substring(start, end) or substring(text, start, end)")
+
+        if not isinstance(start, int) or not isinstance(end, int):
+            raise ExpressionError(f"substring() start and end must be integers")
+
+        return text[start:end]
+
+    def _fn_trim(self, *args) -> str:
+        """Remove leading/trailing whitespace from text.
+
+        Usage:
+            trim()              # Trim description
+            trim(field.memo)    # Trim custom field
+        """
+        if len(args) == 0:
+            return self.description.strip()
+        elif len(args) == 1:
+            return str(args[0]).strip()
+        else:
+            raise ExpressionError("trim() requires 0 or 1 arguments: trim() or trim(text)")
 
     @classmethod
     def from_transaction(cls, txn: Dict, variables: Optional[Dict[str, Any]] = None) -> 'TransactionContext':
@@ -237,6 +399,8 @@ class TransactionContext:
             amount=txn.get('amount', 0.0),
             date=txn.get('date'),
             variables=variables,
+            field=txn.get('field'),
+            source=txn.get('source'),
         )
 
 
@@ -648,6 +812,8 @@ class TransactionEvaluator:
             return self.ctx.year
         if name == 'day':
             return self.ctx.day
+        if name == 'source':
+            return self.ctx.source
         if name == 'true':
             return True
         if name == 'false':
@@ -756,12 +922,44 @@ class TransactionEvaluator:
 
         return True
 
+    def _eval_Attribute(self, node: ast.Attribute) -> Any:
+        """Handle attribute access like field.txn_type."""
+        # Handle field.name access
+        if isinstance(node.value, ast.Name) and node.value.id.lower() == 'field':
+            field_name = node.attr
+            if self.ctx.field is None:
+                raise ExpressionError(
+                    f"Unknown field: field.{field_name}. "
+                    f"No custom fields captured from CSV format string."
+                )
+            if field_name not in self.ctx.field:
+                available = ', '.join(sorted(self.ctx.field.keys())) if self.ctx.field else 'none'
+                raise ExpressionError(
+                    f"Unknown field: field.{field_name}. "
+                    f"Available fields: {available}"
+                )
+            return self.ctx.field[field_name]
+
+        raise ExpressionError(f"Unsupported attribute access: {ast.dump(node)}")
+
     def _eval_Call(self, node: ast.Call) -> Any:
         # Get function name
         if isinstance(node.func, ast.Name):
             func_name = node.func.id.lower()
         else:
             raise ExpressionError("Only simple function calls are supported")
+
+        # Special handling for exists() - catch field access errors
+        if func_name == 'exists':
+            if len(node.args) != 1:
+                raise ExpressionError("exists() requires exactly 1 argument: exists(field.name)")
+            try:
+                arg_value = self.evaluate(node.args[0])
+                # Field exists if it has a non-empty string value
+                return bool(arg_value and str(arg_value).strip())
+            except ExpressionError:
+                # Field doesn't exist - return False
+                return False
 
         if func_name not in self.ctx.functions:
             raise ExpressionError(f"Unknown function: {func_name}")

@@ -1039,3 +1039,908 @@ class TestSpecialTags:
         # All spending included: 50 + 100 + 5 = 155
         total_spending = sum(data['total'] for data in stats['by_category'].values())
         assert total_spending == 155.00
+
+
+class TestCustomFieldCaptures:
+    """Tests for custom CSV fields captured and used in rule expressions."""
+
+    def test_custom_field_stored_in_transaction(self):
+        """Custom captures from CSV format are stored in transaction dict."""
+        csv_content = """01/15/2025,WIRE,REF:12345,ACME CORP,1000.00
+01/16/2025,ACH,PAYROLL,EMPLOYER,2500.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            # Format with custom captures: txn_type, memo, vendor
+            # Must pass description_template to the function
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{memo},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False  # No header row in test data
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First transaction should have captured fields
+            assert txns[0]['field'] is not None
+            assert txns[0]['field']['txn_type'] == 'WIRE'
+            assert txns[0]['field']['memo'] == 'REF:12345'
+            assert txns[0]['field']['vendor'] == 'ACME CORP'
+
+            # Second transaction
+            assert txns[1]['field']['txn_type'] == 'ACH'
+            assert txns[1]['field']['memo'] == 'PAYROLL'
+        finally:
+            os.unlink(f.name)
+
+    def test_simple_description_no_custom_field(self):
+        """Simple {description} format has no custom field captures."""
+        csv_content = """01/15/2025,AMAZON PURCHASE,50.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y},{description},{amount}')
+            format_spec.has_header = False  # No header row in test data
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            # No custom captures - field should be None or empty
+            assert txns[0]['field'] is None or txns[0]['field'] == {}
+        finally:
+            os.unlink(f.name)
+
+    def test_field_used_in_rule_matching(self):
+        """Custom field can be used in merchant rule expressions."""
+        csv_content = """01/15/2025,WIRE,REF:12345,BANK PAYMENT,1000.00
+01/16/2025,ACH,PAYROLL,BANK PAYMENT,2500.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Create rules that use field.txn_type
+            rules = [
+                # Match expression, merchant, category, subcategory, parsed, source, tags
+                ('field.txn_type == "WIRE"', 'Wire Transfer', 'Transfers', 'Wire', None, 'test', ['wire']),
+                ('field.txn_type == "ACH"', 'ACH Transfer', 'Transfers', 'ACH', None, 'test', ['ach']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{memo},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False  # No header row in test data
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First should match WIRE rule
+            assert txns[0]['merchant'] == 'Wire Transfer'
+            assert txns[0]['category'] == 'Transfers'
+            assert 'wire' in txns[0]['tags']
+
+            # Second should match ACH rule
+            assert txns[1]['merchant'] == 'ACH Transfer'
+            assert txns[1]['category'] == 'Transfers'
+            assert 'ach' in txns[1]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_field_with_contains_function(self):
+        """Field value can be searched with contains()."""
+        csv_content = """01/15/2025,Invoice #12345 Payment,VENDOR A,500.00
+01/16/2025,Regular purchase,VENDOR B,100.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains(field.memo, "Invoice")', 'Invoice Payment', 'Bills', 'Invoice', None, 'test', ['invoice']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{memo},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False  # No header row in test data
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First matches the Invoice rule
+            assert txns[0]['merchant'] == 'Invoice Payment'
+            assert 'invoice' in txns[0]['tags']
+
+            # Second doesn't match - should be Unknown
+            assert txns[1]['category'] == 'Unknown'
+        finally:
+            os.unlink(f.name)
+
+    def test_field_with_extract_function(self):
+        """Extract function can parse data from field values."""
+        csv_content = """01/15/2025,REF:ABC123,VENDOR A,500.00
+01/16/2025,REF:XYZ789,VENDOR B,100.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                (r'extract(field.memo, "REF:(\\w+)") == "ABC123"', 'Specific Ref', 'Payments', 'Ref', None, 'test', []),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{memo},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False  # No header row in test data
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First matches the specific reference
+            assert txns[0]['merchant'] == 'Specific Ref'
+
+            # Second doesn't match
+            assert txns[1]['merchant'] != 'Specific Ref'
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_from_field(self):
+        """Tags can use {field.name} to get dynamic values."""
+        csv_content = """01/15/2025,WIRE,REF:12345,BANK PAYMENT,1000.00
+01/16/2025,ACH,PAYROLL,BANK PAYMENT,2500.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Rule with dynamic tag from field value
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test', ['banking', '{field.txn_type}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{memo},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First transaction: static "banking" + dynamic "wire" from field.txn_type
+            assert 'banking' in txns[0]['tags']
+            assert 'wire' in txns[0]['tags']  # Lowercased from "WIRE"
+
+            # Second transaction: static "banking" + dynamic "ach" from field.txn_type
+            assert 'banking' in txns[1]['tags']
+            assert 'ach' in txns[1]['tags']  # Lowercased from "ACH"
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_with_extract(self):
+        """Tags can use extraction functions for dynamic values."""
+        csv_content = """01/15/2025,PROJ:ALPHA Payment,VENDOR A,500.00
+01/16/2025,PROJ:BETA Invoice,VENDOR B,100.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Rule with dynamic tag using extract function
+            # Match on field.memo since description is {vendor}
+            rules = [
+                ('contains(field.memo, "PROJ:")', 'Project Payment', 'Bills', 'Project', None, 'test',
+                 ['project', r'{extract(field.memo, "PROJ:(\\w+)")}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{memo},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First: "project" + "alpha" (extracted and lowercased)
+            assert 'project' in txns[0]['tags']
+            assert 'alpha' in txns[0]['tags']
+
+            # Second: "project" + "beta"
+            assert 'project' in txns[1]['tags']
+            assert 'beta' in txns[1]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_empty_value_skipped(self):
+        """Dynamic tags with empty values are skipped."""
+        csv_content = """01/15/2025,WIRE,BANK PAYMENT,1000.00
+01/16/2025,,BANK PAYMENT,500.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Rule with dynamic tag - empty field value should be skipped
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test', ['banking', '{field.txn_type}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+
+            # First: has both tags
+            assert 'banking' in txns[0]['tags']
+            assert 'wire' in txns[0]['tags']
+
+            # Second: only static tag (empty field.txn_type skipped)
+            assert 'banking' in txns[1]['tags']
+            assert len(txns[1]['tags']) == 1  # Only 'banking'
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_invalid_expression_skipped(self):
+        """Dynamic tags with invalid expressions are silently skipped."""
+        csv_content = """01/15/2025,WIRE,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Rule with invalid dynamic tag expression
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['banking', '{invalid_syntax(}']),  # Invalid expression
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            # Only static tag, invalid expression is skipped
+            assert txns[0]['tags'] == ['banking']
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_nonexistent_field_skipped(self):
+        """Dynamic tags referencing non-existent fields are skipped."""
+        csv_content = """01/15/2025,WIRE,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Rule with dynamic tag referencing field that doesn't exist
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['banking', '{field.nonexistent}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            # Only static tag, nonexistent field is skipped
+            assert txns[0]['tags'] == ['banking']
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_multiple_dynamic(self):
+        """Multiple dynamic tags in same rule."""
+        csv_content = """01/15/2025,WIRE,OUT,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Rule with multiple dynamic tags
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['{field.txn_type}', '{field.direction}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{direction},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            assert 'wire' in txns[0]['tags']
+            assert 'out' in txns[0]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_whitespace_only_skipped(self):
+        """Dynamic tags that evaluate to whitespace-only are skipped."""
+        csv_content = """01/15/2025,   ,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['banking', '{field.txn_type}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            # Only static tag (whitespace-only field.txn_type is skipped after trim)
+            assert txns[0]['tags'] == ['banking']
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_empty_braces_skipped(self):
+        """Empty braces {} are skipped."""
+        csv_content = """01/15/2025,WIRE,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['banking', '{}']),  # Empty braces
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            assert txns[0]['tags'] == ['banking']
+        finally:
+            os.unlink(f.name)
+
+    def test_dynamic_tags_case_normalization(self):
+        """Dynamic tag values are lowercased."""
+        csv_content = """01/15/2025,WIRE_TRANSFER,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['{field.txn_type}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            # Mixed case becomes lowercase
+            assert 'wire_transfer' in txns[0]['tags']
+            assert 'WIRE_TRANSFER' not in txns[0]['tags']
+        finally:
+            os.unlink(f.name)
+
+
+class TestFieldAccessEdgeCases:
+    """Edge case tests for field access in rule expressions."""
+
+    def test_field_comparison_case_sensitivity(self):
+        """Field comparison is case-insensitive for string equality."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'code': 'WIRE'}
+        }
+        # Case insensitive comparison
+        assert matches_transaction('field.code == "wire"', txn)
+        assert matches_transaction('field.code == "WIRE"', txn)
+        assert matches_transaction('field.code == "Wire"', txn)
+
+    def test_field_with_special_characters(self):
+        """Field values with special characters work correctly."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'memo': 'REF#12345-ABC/XYZ'}
+        }
+        assert matches_transaction('contains(field.memo, "REF#")', txn)
+        assert matches_transaction('contains(field.memo, "-ABC/")', txn)
+
+    def test_field_with_quotes_in_value(self):
+        """Field values containing quotes work correctly."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'memo': 'Payment for "Project X"'}
+        }
+        assert matches_transaction('contains(field.memo, "Project")', txn)
+
+    def test_field_empty_string_vs_missing(self):
+        """Empty string field is different from missing field."""
+        from tally.expr_parser import matches_transaction, ExpressionError
+        import pytest
+
+        # Empty string field
+        txn_empty = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'code': ''}
+        }
+        assert matches_transaction('field.code == ""', txn_empty)
+        assert not matches_transaction('exists(field.code)', txn_empty)
+
+        # Missing field raises error
+        txn_missing = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'other': 'value'}
+        }
+        with pytest.raises(ExpressionError):
+            matches_transaction('field.code == ""', txn_missing)
+
+    def test_field_numeric_string(self):
+        """Field with numeric string value."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'ref_num': '12345'}
+        }
+        # String comparison
+        assert matches_transaction('field.ref_num == "12345"', txn)
+        # Can use in extract
+        assert matches_transaction(r'extract(field.ref_num, "(\\d+)") == "12345"', txn)
+
+    def test_exists_with_none_field_dict(self):
+        """exists() returns False when field dict is None."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {'description': 'TEST', 'amount': 100.00}
+        # No 'field' key at all
+        assert not matches_transaction('exists(field.anything)', txn)
+
+    def test_exists_short_circuit_evaluation(self):
+        """exists() allows short-circuit evaluation to prevent errors."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'code': 'ABC'}
+        }
+        # Safe pattern - exists guards the access
+        assert matches_transaction('exists(field.code) and field.code == "ABC"', txn)
+        # Missing field - exists returns False, short-circuits
+        assert not matches_transaction('exists(field.missing) and field.missing == "X"', txn)
+
+    def test_extraction_functions_return_strings(self):
+        """Extraction functions always return strings."""
+        from tally.expr_parser import evaluate_transaction
+
+        txn = {'description': 'REF:12345', 'amount': 100.00}
+
+        # extract returns string
+        result = evaluate_transaction(r'extract("REF:(\\d+)")', txn)
+        assert isinstance(result, str)
+        assert result == '12345'
+
+        # split returns string
+        txn2 = {'description': 'A-B-C', 'amount': 100.00}
+        result = evaluate_transaction('split("-", 1)', txn2)
+        assert isinstance(result, str)
+        assert result == 'B'
+
+        # substring returns string
+        result = evaluate_transaction('substring(0, 1)', txn2)
+        assert isinstance(result, str)
+        assert result == 'A'
+
+    def test_split_negative_index(self):
+        """split() with negative index returns empty string."""
+        from tally.expr_parser import evaluate_transaction
+
+        txn = {'description': 'A-B-C', 'amount': 100.00}
+        result = evaluate_transaction('split("-", -1)', txn)
+        assert result == ''
+
+    def test_substring_negative_indices(self):
+        """substring() with negative indices."""
+        from tally.expr_parser import evaluate_transaction
+
+        txn = {'description': 'ABCDEF', 'amount': 100.00}
+        # Python allows negative indices in slicing
+        result = evaluate_transaction('substring(-3, -1)', txn)
+        # This is 'ABCDEF'[-3:-1] = 'DE'
+        assert result == 'DE'
+
+    def test_extract_multiple_groups_returns_first(self):
+        """extract() with multiple capture groups returns first one."""
+        from tally.expr_parser import evaluate_transaction
+
+        txn = {'description': 'ORDER-ABC-12345-XYZ', 'amount': 100.00}
+        result = evaluate_transaction(r'extract("ORDER-(\\w+)-(\\d+)-(\\w+)")', txn)
+        # Should return first group only
+        assert result == 'ABC'
+
+    def test_trim_preserves_internal_whitespace(self):
+        """trim() only removes leading/trailing whitespace."""
+        from tally.expr_parser import evaluate_transaction
+
+        txn = {'description': '  HELLO   WORLD  ', 'amount': 100.00}
+        result = evaluate_transaction('trim()', txn)
+        assert result == 'HELLO   WORLD'  # Internal spaces preserved
+
+
+class TestSourceDynamicTags:
+    """Tests for using source in dynamic tags and expressions."""
+
+    def test_source_in_expression(self):
+        """source variable is accessible in rule expressions."""
+        from tally.expr_parser import matches_transaction
+
+        txn = {
+            'description': 'PURCHASE',
+            'amount': 100.00,
+            'source': 'Amex',
+        }
+        assert matches_transaction('source == "amex"', txn)
+        assert matches_transaction('source == "Amex"', txn)
+        assert not matches_transaction('source == "Chase"', txn)
+
+    def test_source_dynamic_tag(self):
+        """source can be used as a dynamic tag."""
+        csv_content = """01/15/2025,AMAZON PURCHASE,50.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("AMAZON")', 'Amazon', 'Shopping', 'Online', None, 'test', ['{source}']),
+            ]
+
+            format_spec = parse_format_string('{date:%m/%d/%Y},{description},{amount}')
+            format_spec.has_header = False
+            format_spec.source_name = 'AmexGold'  # Custom source name
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            assert 'amexgold' in txns[0]['tags']  # Lowercased
+        finally:
+            os.unlink(f.name)
+
+    def test_source_dynamic_tag_mixed_with_static(self):
+        """source dynamic tag works with static tags."""
+        csv_content = """01/15/2025,AMAZON PURCHASE,50.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("AMAZON")', 'Amazon', 'Shopping', 'Online', None, 'test',
+                 ['shopping', '{source}', 'online']),
+            ]
+
+            format_spec = parse_format_string('{date:%m/%d/%Y},{description},{amount}')
+            format_spec.has_header = False
+            format_spec.source_name = 'Chase'
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            assert 'shopping' in txns[0]['tags']
+            assert 'chase' in txns[0]['tags']
+            assert 'online' in txns[0]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_source_empty_skipped(self):
+        """Empty source value is skipped as tag."""
+        csv_content = """01/15/2025,AMAZON PURCHASE,50.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("AMAZON")', 'Amazon', 'Shopping', 'Online', None, 'test',
+                 ['shopping', '{source}']),
+            ]
+
+            format_spec = parse_format_string('{date:%m/%d/%Y},{description},{amount}')
+            format_spec.has_header = False
+            # source_name not set - will use default 'CSV' from parameter
+
+            txns = parse_generic_csv(f.name, format_spec, rules, source_name='')
+
+            assert len(txns) == 1
+            # Empty source should be skipped, only static tag remains
+            assert txns[0]['tags'] == ['shopping']
+        finally:
+            os.unlink(f.name)
+
+    def test_source_with_field_combination(self):
+        """source and field can be combined in tags."""
+        csv_content = """01/15/2025,WIRE,BANK PAYMENT,1000.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                ('contains("BANK")', 'Bank Transfer', 'Transfers', 'Bank', None, 'test',
+                 ['{source}', '{field.txn_type}']),
+            ]
+
+            format_spec = parse_format_string(
+                '{date:%m/%d/%Y},{txn_type},{vendor},{amount}',
+                description_template='{vendor}'
+            )
+            format_spec.has_header = False
+            format_spec.source_name = 'WellsFargo'
+
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 1
+            assert 'wellsfargo' in txns[0]['tags']
+            assert 'wire' in txns[0]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_source_in_matching_expression(self):
+        """source can be used to conditionally match by data source."""
+        csv_content = """01/15/2025,AMAZON PURCHASE,50.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = [
+                # Only match for Amex source
+                ('contains("AMAZON") and source == "Amex"', 'Amazon Amex', 'Shopping', 'Amex', None, 'test', ['amex-purchase']),
+                # Fallback for other sources
+                ('contains("AMAZON")', 'Amazon', 'Shopping', 'Online', None, 'test', ['generic-purchase']),
+            ]
+
+            format_spec = parse_format_string('{date:%m/%d/%Y},{description},{amount}')
+            format_spec.has_header = False
+
+            # Test with Amex source
+            format_spec.source_name = 'Amex'
+            txns = parse_generic_csv(f.name, format_spec, rules)
+            assert len(txns) == 1
+            assert txns[0]['merchant'] == 'Amazon Amex'
+            assert 'amex-purchase' in txns[0]['tags']
+
+            # Test with Chase source - should fall through to second rule
+            format_spec.source_name = 'Chase'
+            txns = parse_generic_csv(f.name, format_spec, rules)
+            assert len(txns) == 1
+            assert txns[0]['merchant'] == 'Amazon'
+            assert 'generic-purchase' in txns[0]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_source_none_handled_gracefully(self):
+        """source being None doesn't cause errors."""
+        from tally.expr_parser import TransactionContext, TransactionEvaluator, parse_expression
+
+        ctx = TransactionContext(
+            description='TEST',
+            amount=100.00,
+            source=None,  # Explicitly None
+        )
+        evaluator = TransactionEvaluator(ctx)
+
+        # source == "" should work (None becomes empty string)
+        tree = parse_expression('source == ""')
+        assert evaluator.evaluate(tree) == True
+
+        # Using source as tag when None should result in empty string
+        assert ctx.source == ""
+
+    def test_source_cardholder_tag_example(self):
+        """Example: Use source to tag transactions by card holder."""
+        csv_content = """01/15/2025,GROCERIES,150.00
+01/16/2025,GAS STATION,50.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            # Universal rules that tag by source (cardholder name)
+            rules = [
+                ('contains("GROCERIES")', 'Grocery Store', 'Food', 'Grocery', None, 'test', ['food', '{source}']),
+                ('contains("GAS")', 'Gas Station', 'Transport', 'Gas', None, 'test', ['transport', '{source}']),
+            ]
+
+            format_spec = parse_format_string('{date:%m/%d/%Y},{description},{amount}')
+            format_spec.has_header = False
+
+            # Alice's Amex card
+            format_spec.source_name = 'Alice-Amex'
+            txns = parse_generic_csv(f.name, format_spec, rules)
+            assert len(txns) == 2
+            assert 'alice-amex' in txns[0]['tags']
+            assert 'food' in txns[0]['tags']
+            assert 'alice-amex' in txns[1]['tags']
+
+            # Bob's Chase card
+            format_spec.source_name = 'Bob-Chase'
+            txns = parse_generic_csv(f.name, format_spec, rules)
+            assert 'bob-chase' in txns[0]['tags']
+            assert 'bob-chase' in txns[1]['tags']
+        finally:
+            os.unlink(f.name)
+
+    def test_mixed_sources_field_missing(self):
+        """Mixing sources where some have custom fields and others don't."""
+        from tally.merchant_utils import normalize_merchant, _resolve_dynamic_tags
+
+        # Transaction with field
+        txn_with_field = {
+            'description': 'BANK PAYMENT',
+            'amount': 100.00,
+            'field': {'txn_type': 'WIRE'},
+            'source': 'BankA',
+        }
+
+        # Transaction without field (field is None)
+        txn_without_field = {
+            'description': 'BANK PAYMENT',
+            'amount': 100.00,
+            'field': None,
+            'source': 'BankB',
+        }
+
+        # Tags that use both source and field
+        tags = ['{source}', '{field.txn_type}']
+
+        # With field - both resolve
+        resolved = _resolve_dynamic_tags(tags, txn_with_field)
+        assert 'banka' in resolved
+        assert 'wire' in resolved
+
+        # Without field - source resolves, field.txn_type fails gracefully
+        resolved = _resolve_dynamic_tags(tags, txn_without_field)
+        assert 'bankb' in resolved
+        assert len(resolved) == 1  # Only source, field.txn_type was skipped
+
+    def test_source_whitespace_only_skipped(self):
+        """source with only whitespace is skipped as tag."""
+        from tally.merchant_utils import _resolve_dynamic_tags
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'source': '   ',  # Only whitespace
+        }
+
+        tags = ['static', '{source}']
+        resolved = _resolve_dynamic_tags(tags, txn)
+
+        # Only static tag remains, whitespace source is skipped
+        assert resolved == ['static']
+
+    def test_field_whitespace_only_skipped(self):
+        """field with only whitespace is skipped as tag."""
+        from tally.merchant_utils import _resolve_dynamic_tags
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'type': '   '},  # Only whitespace
+        }
+
+        tags = ['static', '{field.type}']
+        resolved = _resolve_dynamic_tags(tags, txn)
+
+        # Only static tag remains
+        assert resolved == ['static']
+
+    def test_expression_result_stripped(self):
+        """Expression results are stripped of whitespace."""
+        from tally.merchant_utils import _resolve_dynamic_tags
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'type': '  WIRE  '},  # Whitespace around value
+        }
+
+        tags = ['{field.type}']
+        resolved = _resolve_dynamic_tags(tags, txn)
+
+        # Value is trimmed and lowercased
+        assert resolved == ['wire']
+
+    def test_source_with_leading_trailing_whitespace(self):
+        """source with leading/trailing whitespace is trimmed."""
+        from tally.merchant_utils import _resolve_dynamic_tags
+
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'source': '  Amex  ',
+        }
+
+        tags = ['{source}']
+        resolved = _resolve_dynamic_tags(tags, txn)
+
+        assert resolved == ['amex']

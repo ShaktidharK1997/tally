@@ -432,3 +432,616 @@ class TestFuzzyFunction:
         """fuzzy() finds match within longer description."""
         txn = {'description': 'PAYMENT TO AMZAON SERVICES', 'amount': 100.00}
         assert matches_transaction('fuzzy("AMAZON")', txn)
+
+
+# =============================================================================
+# Custom Field Access Tests
+# =============================================================================
+
+class TestFieldAccess:
+    """Tests for field.name attribute access."""
+
+    def test_field_access_basic(self):
+        """Basic field access works."""
+        txn = {
+            'description': 'BANK WIRE',
+            'amount': 1000.00,
+            'field': {'txn_type': 'WIRE', 'memo': 'Payment to vendor'}
+        }
+        assert matches_transaction('field.txn_type == "WIRE"', txn)
+        assert matches_transaction('field.memo == "Payment to vendor"', txn)
+
+    def test_field_access_case_insensitive_comparison(self):
+        """Field comparisons are case insensitive for strings."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'code': 'ACH'}
+        }
+        assert matches_transaction('field.code == "ach"', txn)
+        assert matches_transaction('field.code == "ACH"', txn)
+
+    def test_field_access_with_contains(self):
+        """Field value can be used with matching functions."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'memo': 'REF:12345 PAYROLL'}
+        }
+        assert matches_transaction('contains(field.memo, "PAYROLL")', txn)
+        assert matches_transaction('contains(field.memo, "REF")', txn)
+        assert not matches_transaction('contains(field.memo, "WIRE")', txn)
+
+    def test_field_access_missing_field_raises_error(self):
+        """Accessing nonexistent field raises error with helpful message."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'txn_type': 'ACH'}
+        }
+        with pytest.raises(ExpressionError, match="Unknown field: field.missing"):
+            matches_transaction('field.missing == "X"', txn)
+        # Also verify it shows available fields
+        with pytest.raises(ExpressionError, match="Available fields: txn_type"):
+            matches_transaction('field.missing == "X"', txn)
+
+    def test_field_access_no_field_dict_raises_error(self):
+        """Accessing field when no field dict exists raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="No custom fields captured"):
+            matches_transaction('field.txn_type == "WIRE"', txn)
+
+    def test_field_access_empty_field_dict(self):
+        """Empty field dict still raises error for any access."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'field': {}}
+        with pytest.raises(ExpressionError, match="Available fields: none"):
+            matches_transaction('field.code == "X"', txn)
+
+    def test_field_access_with_and_or(self):
+        """Field access works with boolean operators."""
+        txn = {
+            'description': 'BANK WIRE',
+            'amount': 1000.00,
+            'field': {'txn_type': 'WIRE', 'direction': 'OUT'}
+        }
+        assert matches_transaction('field.txn_type == "WIRE" and field.direction == "OUT"', txn)
+        assert matches_transaction('field.txn_type == "ACH" or field.direction == "OUT"', txn)
+        assert not matches_transaction('field.txn_type == "ACH" and field.direction == "IN"', txn)
+
+
+class TestExistsFunction:
+    """Tests for the exists() function."""
+
+    def test_exists_field_present_nonempty(self):
+        """exists() returns True for non-empty field."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'txn_type': 'WIRE', 'memo': 'Something'}
+        }
+        assert matches_transaction('exists(field.txn_type)', txn)
+        assert matches_transaction('exists(field.memo)', txn)
+
+    def test_exists_field_empty_string(self):
+        """exists() returns False for empty string field."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'txn_type': 'WIRE', 'memo': ''}
+        }
+        assert matches_transaction('exists(field.txn_type)', txn)
+        assert not matches_transaction('exists(field.memo)', txn)
+
+    def test_exists_field_whitespace_only(self):
+        """exists() returns False for whitespace-only field."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'memo': '   '}
+        }
+        assert not matches_transaction('exists(field.memo)', txn)
+
+    def test_exists_missing_field(self):
+        """exists() returns False for missing field (no error)."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'txn_type': 'WIRE'}
+        }
+        # This should NOT raise an error, but return False
+        assert not matches_transaction('exists(field.nonexistent)', txn)
+
+    def test_exists_no_field_dict(self):
+        """exists() returns False when no field dict (no error)."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        assert not matches_transaction('exists(field.anything)', txn)
+
+    def test_exists_with_and(self):
+        """exists() can be used with AND to guard field access."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'txn_type': 'WIRE'}
+        }
+        # Safe pattern: check exists before accessing
+        assert matches_transaction('exists(field.txn_type) and field.txn_type == "WIRE"', txn)
+        # Short-circuit: if exists is False, second part is not evaluated
+        assert not matches_transaction('exists(field.missing) and field.missing == "X"', txn)
+
+    def test_exists_wrong_arg_count(self):
+        """exists() with wrong number of arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'field': {'a': '1'}}
+        with pytest.raises(ExpressionError, match="exists\\(\\) requires exactly 1 argument"):
+            matches_transaction('exists(field.a, "extra")', txn)
+
+
+# =============================================================================
+# Matching Functions with Text Argument Tests
+# =============================================================================
+
+class TestMatchingFunctionsWithText:
+    """Tests for matching functions accepting optional text argument."""
+
+    def test_contains_with_field(self):
+        """contains() with custom field as first argument."""
+        txn = {
+            'description': 'AMAZON PURCHASE',
+            'amount': 45.00,
+            'field': {'memo': 'Order #12345 - REF:ABC'}
+        }
+        # Search in field instead of description
+        assert matches_transaction('contains(field.memo, "REF")', txn)
+        assert matches_transaction('contains(field.memo, "Order")', txn)
+        assert not matches_transaction('contains(field.memo, "AMAZON")', txn)
+
+    def test_regex_with_field(self):
+        """regex() with custom field as first argument."""
+        txn = {
+            'description': 'BANK WIRE',
+            'amount': 1000.00,
+            'field': {'code': 'ACH-OUT-12345'}
+        }
+        assert matches_transaction('regex(field.code, "^ACH-")', txn)
+        assert matches_transaction(r'regex(field.code, "\\d{5}$")', txn)
+        assert not matches_transaction('regex(field.code, "^WIRE")', txn)
+
+    def test_normalized_with_field(self):
+        """normalized() with custom field as first argument."""
+        txn = {
+            'description': 'BANK WIRE',
+            'amount': 1000.00,
+            'field': {'vendor': 'WHOLE-FOODS MARKET'}
+        }
+        assert matches_transaction('normalized(field.vendor, "WHOLEFOODS")', txn)
+        assert matches_transaction('normalized(field.vendor, "WHOLE FOODS")', txn)
+
+    def test_startswith_with_field(self):
+        """startswith() with custom field as first argument."""
+        txn = {
+            'description': 'BANK WIRE',
+            'amount': 1000.00,
+            'field': {'vendor': 'COSTCO WHOLESALE'}
+        }
+        assert matches_transaction('startswith(field.vendor, "COSTCO")', txn)
+        assert not matches_transaction('startswith(field.vendor, "WHOLESALE")', txn)
+
+    def test_fuzzy_with_field(self):
+        """fuzzy() with custom field as first argument."""
+        txn = {
+            'description': 'PAYMENT',
+            'amount': 50.00,
+            'field': {'vendor': 'STARBCKS COFFEE'}  # typo
+        }
+        assert matches_transaction('fuzzy(field.vendor, "STARBUCKS")', txn)
+
+    def test_fuzzy_with_field_and_threshold(self):
+        """fuzzy() with field and custom threshold."""
+        txn = {
+            'description': 'PAYMENT',
+            'amount': 50.00,
+            'field': {'vendor': 'STAR COFFEE'}  # very different
+        }
+        # Default threshold won't match
+        assert not matches_transaction('fuzzy(field.vendor, "STARBUCKS")', txn)
+        # Very low threshold might match
+        assert matches_transaction('fuzzy(field.vendor, "STARBUCKS", 0.3)', txn)
+
+    def test_contains_wrong_args(self):
+        """contains() with wrong number of arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="contains\\(\\) requires 1 or 2 arguments"):
+            matches_transaction('contains("a", "b", "c")', txn)
+
+    def test_regex_wrong_args(self):
+        """regex() with wrong number of arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="regex\\(\\) requires 1 or 2 arguments"):
+            matches_transaction('regex("a", "b", "c")', txn)
+
+
+# =============================================================================
+# Extraction Function Tests
+# =============================================================================
+
+class TestExtractFunction:
+    """Tests for the extract() function."""
+
+    def test_extract_from_description(self):
+        """extract() captures from description."""
+        txn = {'description': 'WIRE REF:98765 TO ACME', 'amount': 1000.00}
+        # Extract the reference number
+        result = evaluate_transaction(r'extract("REF:(\\d+)")', txn)
+        assert result == '98765'
+
+    def test_extract_from_field(self):
+        """extract() captures from custom field."""
+        txn = {
+            'description': 'WIRE',
+            'amount': 1000.00,
+            'field': {'memo': 'CHK#12345 PAYROLL'}
+        }
+        result = evaluate_transaction(r'extract(field.memo, "#(\\d+)")', txn)
+        assert result == '12345'
+
+    def test_extract_no_match(self):
+        """extract() returns empty string when no match."""
+        txn = {'description': 'AMAZON PURCHASE', 'amount': 45.00}
+        result = evaluate_transaction(r'extract("REF:(\\d+)")', txn)
+        assert result == ''
+
+    def test_extract_no_capture_group(self):
+        """extract() returns empty string when pattern has no capture group."""
+        txn = {'description': 'WIRE REF:98765', 'amount': 1000.00}
+        result = evaluate_transaction(r'extract("REF:\\d+")', txn)
+        assert result == ''
+
+    def test_extract_first_group_only(self):
+        """extract() returns only the first capture group."""
+        txn = {'description': 'ORDER-ABC-12345', 'amount': 100.00}
+        result = evaluate_transaction(r'extract("ORDER-(\\w+)-(\\d+)")', txn)
+        assert result == 'ABC'  # First group only
+
+    def test_extract_in_condition(self):
+        """extract() can be used in conditions."""
+        txn = {'description': 'WIRE REF:98765', 'amount': 1000.00}
+        assert matches_transaction(r'extract("REF:(\\d+)") == "98765"', txn)
+        assert matches_transaction(r'extract("REF:(\\d+)") != ""', txn)
+
+    def test_extract_case_insensitive(self):
+        """extract() is case insensitive."""
+        txn = {'description': 'wire ref:98765', 'amount': 1000.00}
+        result = evaluate_transaction(r'extract("REF:(\\d+)")', txn)
+        assert result == '98765'
+
+    def test_extract_invalid_regex(self):
+        """extract() with invalid regex raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="Invalid regex pattern"):
+            evaluate_transaction(r'extract("[invalid")', txn)
+
+    def test_extract_wrong_args(self):
+        """extract() with wrong number of arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="extract\\(\\) requires 1 or 2 arguments"):
+            evaluate_transaction('extract("a", "b", "c")', txn)
+
+
+class TestSplitFunction:
+    """Tests for the split() function."""
+
+    def test_split_from_description(self):
+        """split() splits description and returns element."""
+        txn = {'description': 'ACH-CREDIT-PAYROLL', 'amount': 1000.00}
+        assert evaluate_transaction('split("-", 0)', txn) == 'ACH'
+        assert evaluate_transaction('split("-", 1)', txn) == 'CREDIT'
+        assert evaluate_transaction('split("-", 2)', txn) == 'PAYROLL'
+
+    def test_split_from_field(self):
+        """split() splits custom field."""
+        txn = {
+            'description': 'WIRE',
+            'amount': 1000.00,
+            'field': {'code': 'WIR-OUT-12345'}
+        }
+        assert evaluate_transaction('split(field.code, "-", 0)', txn) == 'WIR'
+        assert evaluate_transaction('split(field.code, "-", 1)', txn) == 'OUT'
+        assert evaluate_transaction('split(field.code, "-", 2)', txn) == '12345'
+
+    def test_split_out_of_bounds(self):
+        """split() returns empty string for out of bounds index."""
+        txn = {'description': 'A-B-C', 'amount': 100.00}
+        assert evaluate_transaction('split("-", 10)', txn) == ''
+        assert evaluate_transaction('split("-", -1)', txn) == ''
+
+    def test_split_in_condition(self):
+        """split() can be used in conditions."""
+        txn = {'description': 'ACH-CREDIT-PAYROLL', 'amount': 1000.00}
+        assert matches_transaction('split("-", 0) == "ACH"', txn)
+        assert matches_transaction('split("-", 1) == "CREDIT"', txn)
+
+    def test_split_strips_whitespace(self):
+        """split() strips whitespace from results."""
+        txn = {'description': 'A - B - C', 'amount': 100.00}
+        assert evaluate_transaction('split("-", 1)', txn) == 'B'
+
+    def test_split_no_delimiter(self):
+        """split() with non-matching delimiter returns full string at index 0."""
+        txn = {'description': 'NODASHES', 'amount': 100.00}
+        assert evaluate_transaction('split("-", 0)', txn) == 'NODASHES'
+        assert evaluate_transaction('split("-", 1)', txn) == ''
+
+    def test_split_non_integer_index(self):
+        """split() with non-integer index raises error."""
+        txn = {'description': 'A-B-C', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="index must be an integer"):
+            evaluate_transaction('split("-", "0")', txn)
+
+    def test_split_wrong_args(self):
+        """split() with wrong number of arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="split\\(\\) requires 2 or 3 arguments"):
+            evaluate_transaction('split("-")', txn)
+
+
+class TestSubstringFunction:
+    """Tests for the substring() function."""
+
+    def test_substring_from_description(self):
+        """substring() extracts from description."""
+        txn = {'description': 'AMZN*MARKETPLACE', 'amount': 45.00}
+        assert evaluate_transaction('substring(0, 4)', txn) == 'AMZN'
+        assert evaluate_transaction('substring(5, 16)', txn) == 'MARKETPLACE'
+
+    def test_substring_from_field(self):
+        """substring() extracts from custom field."""
+        txn = {
+            'description': 'WIRE',
+            'amount': 1000.00,
+            'field': {'code': 'WIRE12345'}
+        }
+        assert evaluate_transaction('substring(field.code, 0, 4)', txn) == 'WIRE'
+        assert evaluate_transaction('substring(field.code, 4, 9)', txn) == '12345'
+
+    def test_substring_beyond_length(self):
+        """substring() handles end beyond string length gracefully."""
+        txn = {'description': 'SHORT', 'amount': 100.00}
+        assert evaluate_transaction('substring(0, 100)', txn) == 'SHORT'
+
+    def test_substring_in_condition(self):
+        """substring() can be used in conditions."""
+        txn = {'description': 'AMZN*MARKETPLACE', 'amount': 45.00}
+        assert matches_transaction('substring(0, 4) == "AMZN"', txn)
+
+    def test_substring_non_integer_args(self):
+        """substring() with non-integer args raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="start and end must be integers"):
+            evaluate_transaction('substring("0", 4)', txn)
+
+    def test_substring_wrong_args(self):
+        """substring() with wrong number of arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="substring\\(\\) requires 2 or 3 arguments"):
+            evaluate_transaction('substring(0)', txn)
+
+
+class TestTrimFunction:
+    """Tests for the trim() function."""
+
+    def test_trim_description(self):
+        """trim() with no args trims description."""
+        txn = {'description': '  AMAZON  ', 'amount': 45.00}
+        assert evaluate_transaction('trim()', txn) == 'AMAZON'
+
+    def test_trim_field(self):
+        """trim() with field argument trims field value."""
+        txn = {
+            'description': 'WIRE',
+            'amount': 1000.00,
+            'field': {'memo': '  PAYROLL  '}
+        }
+        assert evaluate_transaction('trim(field.memo)', txn) == 'PAYROLL'
+
+    def test_trim_already_trimmed(self):
+        """trim() on already trimmed string returns same string."""
+        txn = {'description': 'AMAZON', 'amount': 45.00}
+        assert evaluate_transaction('trim()', txn) == 'AMAZON'
+
+    def test_trim_in_condition(self):
+        """trim() can be used in conditions."""
+        txn = {'description': '  AMAZON  ', 'amount': 45.00}
+        assert matches_transaction('trim() == "AMAZON"', txn)
+
+    def test_trim_empty_string(self):
+        """trim() on empty or whitespace-only returns empty."""
+        txn = {'description': '   ', 'amount': 100.00}
+        assert evaluate_transaction('trim()', txn) == ''
+
+    def test_trim_wrong_args(self):
+        """trim() with too many arguments raises error."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        with pytest.raises(ExpressionError, match="trim\\(\\) requires 0 or 1 arguments"):
+            evaluate_transaction('trim("a", "b")', txn)
+
+
+# =============================================================================
+# Integration and Edge Case Tests
+# =============================================================================
+
+class TestFieldAndFunctionIntegration:
+    """Tests combining field access with extraction functions."""
+
+    def test_extract_from_field_in_condition(self):
+        """Complex expression: extract from field in condition."""
+        txn = {
+            'description': 'WIRE TRANSFER',
+            'amount': 5000.00,
+            'field': {'memo': 'REF:ABC123 INVOICE #456'}
+        }
+        assert matches_transaction(r'extract(field.memo, "REF:(\\w+)") == "ABC123"', txn)
+        assert matches_transaction(r'extract(field.memo, "#(\\d+)") == "456"', txn)
+
+    def test_split_field_in_condition(self):
+        """Complex expression: split field in condition."""
+        txn = {
+            'description': 'PAYMENT',
+            'amount': 1000.00,
+            'field': {'code': 'ACH-OUT-VENDOR'}
+        }
+        assert matches_transaction('split(field.code, "-", 0) == "ACH"', txn)
+        assert matches_transaction('split(field.code, "-", 1) == "OUT"', txn)
+
+    def test_combined_field_and_description_match(self):
+        """Match using both field and description."""
+        txn = {
+            'description': 'BANK WIRE TO VENDOR',
+            'amount': 5000.00,
+            'field': {'txn_type': 'WIRE', 'memo': 'Invoice payment'}
+        }
+        expr = 'contains("WIRE") and field.txn_type == "WIRE" and contains(field.memo, "Invoice")'
+        assert matches_transaction(expr, txn)
+
+    def test_exists_guards_extract(self):
+        """Use exists() to guard extract() on optional field."""
+        txn_with_memo = {
+            'description': 'WIRE',
+            'amount': 1000.00,
+            'field': {'memo': 'REF:12345'}
+        }
+        txn_without_memo = {
+            'description': 'WIRE',
+            'amount': 1000.00,
+            'field': {'other': 'value'}
+        }
+        # Without exists guard - should still work with exists
+        expr = r'exists(field.memo) and extract(field.memo, "REF:(\\d+)") == "12345"'
+        assert matches_transaction(expr, txn_with_memo)
+        assert not matches_transaction(expr, txn_without_memo)
+
+
+class TestEdgeCases:
+    """Edge case tests for robustness."""
+
+    def test_empty_description(self):
+        """Functions handle empty description."""
+        txn = {'description': '', 'amount': 100.00}
+        assert not matches_transaction('contains("AMAZON")', txn)
+        assert evaluate_transaction('trim()', txn) == ''
+        assert evaluate_transaction('split("-", 0)', txn) == ''
+
+    def test_field_with_special_characters(self):
+        """Field values with special characters work correctly."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'memo': 'Payment for "Project X" (2025)'}
+        }
+        assert matches_transaction('contains(field.memo, "Project X")', txn)
+        assert matches_transaction('contains(field.memo, "(2025)")', txn)
+
+    def test_multiple_field_access(self):
+        """Multiple field accesses in same expression."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {
+                'type': 'ACH',
+                'direction': 'OUT',
+                'category': 'PAYMENT'
+            }
+        }
+        expr = 'field.type == "ACH" and field.direction == "OUT" and field.category == "PAYMENT"'
+        assert matches_transaction(expr, txn)
+
+    def test_from_transaction_includes_field(self):
+        """TransactionContext.from_transaction() includes field."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'field': {'code': 'ABC'}
+        }
+        ctx = TransactionContext.from_transaction(txn)
+        assert ctx.field == {'code': 'ABC'}
+
+    def test_from_transaction_no_field(self):
+        """TransactionContext.from_transaction() works without field."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        ctx = TransactionContext.from_transaction(txn)
+        assert ctx.field is None
+
+
+class TestSourceVariable:
+    """Tests for the source variable in expressions."""
+
+    def test_source_accessible(self):
+        """source variable is accessible in expressions."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': 'Amex'}
+        assert matches_transaction('source == "Amex"', txn)
+        assert matches_transaction('source == "amex"', txn)  # case-insensitive
+
+    def test_source_not_matches(self):
+        """source comparison returns false for non-matching."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': 'Amex'}
+        assert not matches_transaction('source == "Chase"', txn)
+
+    def test_source_combined_with_other_conditions(self):
+        """source can be combined with other conditions."""
+        txn = {
+            'description': 'AMAZON PURCHASE',
+            'amount': 50.00,
+            'source': 'Amex'
+        }
+        assert matches_transaction('contains("AMAZON") and source == "Amex"', txn)
+        assert not matches_transaction('contains("AMAZON") and source == "Chase"', txn)
+
+    def test_source_with_field(self):
+        """source can be combined with field access."""
+        txn = {
+            'description': 'TEST',
+            'amount': 100.00,
+            'source': 'BankA',
+            'field': {'type': 'WIRE'}
+        }
+        assert matches_transaction('source == "BankA" and field.type == "WIRE"', txn)
+
+    def test_source_none_becomes_empty_string(self):
+        """source is empty string when None."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': None}
+        assert matches_transaction('source == ""', txn)
+
+    def test_source_missing_becomes_empty_string(self):
+        """source is empty string when not in transaction."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        assert matches_transaction('source == ""', txn)
+
+    def test_from_transaction_includes_source(self):
+        """TransactionContext.from_transaction() includes source."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': 'Chase'}
+        ctx = TransactionContext.from_transaction(txn)
+        assert ctx.source == 'Chase'
+
+    def test_from_transaction_no_source(self):
+        """TransactionContext.from_transaction() works without source."""
+        txn = {'description': 'TEST', 'amount': 100.00}
+        ctx = TransactionContext.from_transaction(txn)
+        assert ctx.source == ""  # Default to empty string
+
+    def test_source_can_be_returned_as_value(self):
+        """source can be used as a return value (for dynamic tags)."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': 'AmexGold'}
+        result = evaluate_transaction('source', txn)
+        assert result == 'AmexGold'
+
+    def test_source_in_contains(self):
+        """source value can be checked with contains if needed."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': 'AmexGold'}
+        # Can use contains on the source string
+        assert matches_transaction('contains(source, "Amex")', txn)
+        assert matches_transaction('contains(source, "Gold")', txn)
+        assert not matches_transaction('contains(source, "Chase")', txn)
+
+    def test_source_or_condition(self):
+        """source works with OR conditions."""
+        txn = {'description': 'TEST', 'amount': 100.00, 'source': 'Chase'}
+        assert matches_transaction('source == "Amex" or source == "Chase"', txn)
+        assert not matches_transaction('source == "Amex" or source == "Discover"', txn)

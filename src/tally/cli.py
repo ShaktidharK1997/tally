@@ -2507,9 +2507,14 @@ def cmd_reference(args):
 """)
 
         section("Match Functions")
+        print(f"""  {C.DIM}All match functions search description by default.{C.RESET}
+  {C.DIM}Add an optional first argument to search a custom field instead.{C.RESET}
+""")
         funcs = [
             ('contains("text")', 'Case-insensitive substring match',
              'match: contains("NETFLIX")', 'Matches "NETFLIX.COM", "netflix", etc.'),
+            ('contains(field.x, "text")', 'Search custom field',
+             'match: contains(field.memo, "REF")', 'Searches in field.memo'),
             ('regex("pattern")', 'Perl-compatible regex',
              'match: regex("UBER\\\\s(?!EATS)")', 'Matches "UBER TRIP" but not "UBER EATS"'),
             ('normalized("text")', 'Ignores spaces, hyphens, punctuation',
@@ -2560,6 +2565,53 @@ def cmd_reference(args):
         {C.DIM}match: (contains("AMAZON") or contains("AMZN")) and amount > 100{C.RESET}
 """)
 
+        section("Custom CSV Fields")
+        print(f"""
+  Access custom fields captured from CSV format strings using {C.GREEN}field.<name>{C.RESET}:
+
+  {C.DIM}# In settings.yaml:{C.RESET}
+  {C.CYAN}format: "{{date}},{{txn_type}},{{memo}},{{vendor}},{{amount}}"{C.RESET}
+  {C.CYAN}columns:{C.RESET}
+  {C.CYAN}  description: "{{vendor}}"{C.RESET}
+
+  {C.DIM}# In merchants.rules:{C.RESET}
+  {C.DIM}[Wire Transfer]{C.RESET}
+  {C.DIM}match: field.txn_type == "WIRE"{C.RESET}
+  {C.DIM}category: Transfers{C.RESET}
+
+  {C.DIM}[Invoice Payment]{C.RESET}
+  {C.DIM}match: contains(field.memo, "Invoice"){C.RESET}
+  {C.DIM}category: Bills{C.RESET}
+
+  Use {C.GREEN}exists(field.name){C.RESET} to safely check if a field exists:
+  {C.DIM}match: exists(field.memo) and contains(field.memo, "REF"){C.RESET}
+""")
+
+        section("Extraction Functions")
+        extract_funcs = [
+            ('extract("pattern")', 'Extract first regex capture group',
+             r'extract("REF:(\\d+)")', 'Captures "12345" from "REF:12345"'),
+            ('extract(field.x, "pattern")', 'Extract from custom field',
+             r'extract(field.memo, "#(\\d+)")', 'Captures from field.memo'),
+            ('split("-", 0)', 'Split by delimiter, get element at index',
+             'split("-", 0)', '"ACH-OUT-123" → "ACH"'),
+            ('split(field.x, "-", 1)', 'Split custom field',
+             'split(field.code, "-", 1)', 'Gets second element'),
+            ('substring(0, 4)', 'Extract substring by position',
+             'substring(0, 4)', '"AMZN*MARKET" → "AMZN"'),
+            ('trim()', 'Remove leading/trailing whitespace',
+             'trim()', '"  AMAZON  " → "AMAZON"'),
+            ('trim(field.x)', 'Trim custom field',
+             'trim(field.memo)', 'Trims field.memo'),
+            ('exists(field.x)', 'Check if field exists and is non-empty',
+             'exists(field.memo)', 'Returns false if missing or empty'),
+        ]
+        for func, desc, example, note in extract_funcs:
+            print(f"  {C.GREEN}{func}{C.RESET}")
+            print(f"    {desc}")
+            print(f"    {C.DIM}Example: {example} → {note}{C.RESET}")
+            print()
+
         section("Variables")
         print(f"""
   Define reusable conditions at the top of your file:
@@ -2586,6 +2638,32 @@ def cmd_reference(args):
 
   {C.CYAN}refund{C.RESET}     Returns and credits on purchases
              {C.DIM}→ Shown in "Credits Applied" section, nets against spending{C.RESET}
+""")
+
+        section("Dynamic Tags")
+        print(f"""
+  Use {C.GREEN}{{expression}}{C.RESET} to create tags from field values or data source:
+
+  {C.DIM}[Bank Transaction]{C.RESET}
+  {C.DIM}match: contains("BANK"){C.RESET}
+  {C.DIM}category: Transfers{C.RESET}
+  {C.DIM}tags: banking, {{field.txn_type}}{C.RESET}     {C.DIM}# → "banking", "wire" or "ach"{C.RESET}
+
+  {C.DIM}[Project Expense]{C.RESET}
+  {C.DIM}match: contains(field.memo, "PROJ:"){C.RESET}
+  {C.DIM}category: Business{C.RESET}
+  {C.DIM}tags: project, {{extract(field.memo, "PROJ:(\\w+)")}}{C.RESET}  {C.DIM}# → "project", "alpha"{C.RESET}
+
+  Use {C.GREEN}{{source}}{C.RESET} to tag by data source (e.g., card holder):
+  {C.DIM}[All Purchases]{C.RESET}
+  {C.DIM}match: *{C.RESET}
+  {C.DIM}tags: {{source}}{C.RESET}                      {C.DIM}# → "alice-amex", "bob-chase", etc.{C.RESET}
+
+  Use {C.GREEN}source{C.RESET} in match expressions to vary rules by data source:
+  {C.DIM}match: contains("AMAZON") and source == "Amex"{C.RESET}
+
+  {C.DIM}Empty or whitespace-only values are automatically skipped.{C.RESET}
+  {C.DIM}All tags are lowercased for consistency.{C.RESET}
 """)
 
         section("Rule Priority")

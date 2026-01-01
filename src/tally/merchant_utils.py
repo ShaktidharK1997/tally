@@ -9,7 +9,7 @@ import csv
 import os
 import re
 from datetime import date
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 from .modifier_parser import (
     parse_pattern_with_modifiers,
@@ -331,7 +331,9 @@ def normalize_merchant(
     rules: list,
     amount: Optional[float] = None,
     txn_date: Optional[date] = None,
-    cleaning_patterns: Optional[List[str]] = None
+    cleaning_patterns: Optional[List[str]] = None,
+    field: Optional[Dict[str, str]] = None,
+    data_source: Optional[str] = None,
 ) -> Tuple[str, str, str, Optional[dict]]:
     """Normalize a merchant description to (name, category, subcategory, match_info).
 
@@ -342,6 +344,8 @@ def normalize_merchant(
         amount: Optional transaction amount for modifier matching
         txn_date: Optional transaction date for modifier matching
         cleaning_patterns: Optional list of regex patterns to strip from descriptions
+        field: Optional dict of custom CSV captures (for field.name in rule expressions)
+        data_source: Optional data source name (for source variable in rule expressions and dynamic tags)
 
     Returns:
         Tuple of (merchant_name, category, subcategory, match_info)
@@ -374,13 +378,13 @@ def normalize_merchant(
             # Determine if this is an expression pattern or a regex pattern
             if _is_expression_pattern(pattern):
                 # Use expression parser for expression-based rules
-                transaction = {'description': description, 'amount': amount or 0}
+                transaction = {'description': description, 'amount': amount or 0, 'field': field, 'source': data_source}
                 if txn_date:
                     transaction['date'] = txn_date
                 matches_original = expr_parser.matches_transaction(pattern, transaction)
 
                 # Also try with cleaned description
-                transaction_cleaned = {'description': cleaned, 'amount': amount or 0}
+                transaction_cleaned = {'description': cleaned, 'amount': amount or 0, 'field': field, 'source': data_source}
                 if txn_date:
                     transaction_cleaned['date'] = txn_date
                 matches_cleaned = expr_parser.matches_transaction(pattern, transaction_cleaned)
@@ -401,7 +405,15 @@ def normalize_merchant(
                     if not check_all_conditions(parsed, amount, txn_date):
                         continue
 
-            return (merchant, category, subcategory, {'pattern': pattern, 'source': source, 'tags': tags})
+            # Build transaction dict for dynamic tag resolution
+            transaction = {'description': description, 'amount': amount or 0, 'field': field, 'source': data_source}
+            if txn_date:
+                transaction['date'] = txn_date
+
+            # Resolve any dynamic tags (e.g., {field.txn_type})
+            resolved_tags = _resolve_dynamic_tags(tags, transaction) if tags else []
+
+            return (merchant, category, subcategory, {'pattern': pattern, 'source': source, 'tags': resolved_tags})
         except (re.error, expr_parser.ExpressionError):
             # Invalid pattern, skip
             continue
@@ -414,9 +426,70 @@ def normalize_merchant(
 def _is_expression_pattern(pattern: str) -> bool:
     """Check if a pattern is an expression (uses function syntax) vs a regex."""
     import re
-    # Expression patterns start with function calls like contains(), normalized(), etc.
-    return bool(re.match(r'^(contains|normalized|anyof|startswith|fuzzy|regex)\s*\(', pattern)) or \
+    # Expression patterns start with:
+    # - Function calls like contains(), normalized(), extract(), etc.
+    # - Field access like field.txn_type
+    # - Boolean operators like 'and', 'or'
+    # - Parenthesized expressions
+    function_pattern = r'^(contains|normalized|anyof|startswith|fuzzy|regex|extract|split|substring|trim|exists)\s*\('
+    return bool(re.match(function_pattern, pattern)) or \
+           pattern.startswith('field.') or \
            ' and ' in pattern or ' or ' in pattern or pattern.startswith('(')
+
+
+def _resolve_dynamic_tags(
+    tags: List[str],
+    transaction: Dict,
+) -> List[str]:
+    """Resolve dynamic tags, evaluating any {expression} placeholders.
+
+    Supports dynamic tag values from field access or extraction functions:
+        ["wire", "banking"]           -> ["wire", "banking"]
+        ["{field.txn_type}"]          -> ["ach"] (if field.txn_type == "ACH")
+        ["banking", "{field.type}"]   -> ["banking", "wire"]
+        ["{extract(field.memo, r'PROJ:(\\w+)')}"] -> ["abc123"]
+
+    Empty values from expressions are skipped.
+    All tags are lowercased for consistency.
+
+    Args:
+        tags: List of tag strings, may contain {expression} placeholders
+        transaction: Transaction dict with description, amount, date, field
+
+    Returns:
+        List of resolved tag strings (lowercased)
+    """
+    from tally import expr_parser
+
+    resolved = []
+    for tag in tags:
+        tag = tag.strip()
+        if not tag:
+            continue
+
+        if tag.startswith('{') and tag.endswith('}'):
+            # Dynamic tag - evaluate expression
+            expr = tag[1:-1].strip()  # Remove { }
+            if not expr:
+                continue
+
+            try:
+                ctx = expr_parser.TransactionContext.from_transaction(transaction)
+                tree = expr_parser.parse_expression(expr)
+                evaluator = expr_parser.TransactionEvaluator(ctx)
+                value = evaluator.evaluate(tree)
+                if value:  # Only add non-empty values
+                    stripped = str(value).strip()
+                    if stripped:  # Skip whitespace-only values
+                        resolved.append(stripped.lower())
+            except expr_parser.ExpressionError:
+                # Skip invalid expressions silently
+                pass
+        else:
+            # Static tag
+            resolved.append(tag.lower())
+
+    return resolved
 
 
 def explain_description(
@@ -424,7 +497,8 @@ def explain_description(
     rules: list,
     amount: Optional[float] = None,
     txn_date: Optional[date] = None,
-    cleaning_patterns: Optional[List[str]] = None
+    cleaning_patterns: Optional[List[str]] = None,
+    field: Optional[Dict[str, str]] = None,
 ) -> dict:
     """Trace how a description is processed and matched.
 
@@ -475,13 +549,13 @@ def explain_description(
             # Determine if this is an expression pattern or a regex pattern
             if _is_expression_pattern(pattern):
                 # Use expression parser for expression-based rules
-                transaction = {'description': description, 'amount': amount or 0}
+                transaction = {'description': description, 'amount': amount or 0, 'field': field}
                 if txn_date:
                     transaction['date'] = txn_date
                 match_on_original = expr_parser.matches_transaction(pattern, transaction)
 
                 # Also try with cleaned description
-                transaction_cleaned = {'description': cleaned, 'amount': amount or 0}
+                transaction_cleaned = {'description': cleaned, 'amount': amount or 0, 'field': field}
                 if txn_date:
                     transaction_cleaned['date'] = txn_date
                 match_on_cleaned = expr_parser.matches_transaction(pattern, transaction_cleaned)
