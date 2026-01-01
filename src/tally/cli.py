@@ -95,7 +95,6 @@ from .analyzer import (
     analyze_transactions,
     print_summary,
     print_sections_summary,
-    write_summary_file,
     write_summary_file_vue,
 )
 

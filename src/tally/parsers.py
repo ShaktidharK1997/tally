@@ -1,0 +1,441 @@
+"""
+CSV/Transaction Parsing - Parse various bank statement formats.
+
+This module handles parsing of CSV files and other transaction formats.
+"""
+
+import csv
+import re
+from datetime import datetime
+
+from .merchant_utils import normalize_merchant
+from .format_parser import FormatSpec
+
+
+def parse_amount(amount_str, decimal_separator='.'):
+    """Parse an amount string to float, handling various formats.
+
+    Args:
+        amount_str: String like "1,234.56" or "1.234,56" or "(100.00)"
+        decimal_separator: Character used as decimal separator ('.' or ',')
+
+    Returns:
+        Float value of the amount
+    """
+    amount_str = amount_str.strip()
+
+    # Handle parentheses notation for negative: (100.00) -> -100.00
+    negative = False
+    if amount_str.startswith('(') and amount_str.endswith(')'):
+        negative = True
+        amount_str = amount_str[1:-1]
+
+    # Remove currency symbols
+    amount_str = re.sub(r'[$€£¥]', '', amount_str).strip()
+
+    if decimal_separator == ',':
+        # European format: 1.234,56 or 1 234,56
+        # Remove thousand separators (period or space)
+        amount_str = amount_str.replace('.', '').replace(' ', '')
+        # Convert decimal comma to period for float()
+        amount_str = amount_str.replace(',', '.')
+    else:
+        # US format: 1,234.56
+        # Remove thousand separators (comma)
+        amount_str = amount_str.replace(',', '')
+
+    result = float(amount_str)
+    return -result if negative else result
+
+
+def extract_location(description):
+    """Extract state/country code from transaction description."""
+    # Pattern: ends with 2-letter code (state or country)
+    match = re.search(r'\s+([A-Z]{2})\s*$', description)
+    if match:
+        return match.group(1)
+    return None
+
+
+def is_travel_location(location, home_locations):
+    """Determine if a location represents travel (away from home).
+
+    Only international locations (outside US) are automatically considered travel.
+    Domestic out-of-state transactions can be marked as travel via merchant rules
+    (e.g., add ".*HI$,Hawaii Trip,Travel,Hawaii" to merchant_categories.csv).
+
+    Args:
+        location: 2-letter location code (state or country)
+        home_locations: Set of location codes considered "home"
+
+    Returns:
+        True if this is a travel location, False otherwise
+    """
+    if not location:
+        return False
+
+    # US state codes
+    us_states = {
+        'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+        'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+        'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+        'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+        'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+        'DC', 'PR', 'VI', 'GU'
+    }
+
+    location = location.upper()
+
+    # International (not a US state) = travel unless explicitly in home_locations
+    if location not in us_states:
+        return location not in home_locations
+
+    # Domestic US states = NOT travel by default
+    # Users can mark specific locations as travel via merchant_categories.csv
+    return False
+
+
+def parse_amex(filepath, rules, home_locations=None):
+    """Parse AMEX CSV file and return list of transactions.
+
+    DEPRECATED: Use format strings instead. This parser will be removed in a future release.
+    """
+    home_locations = home_locations or set()
+    transactions = []
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                amount = float(row['Amount'])
+                if amount == 0:
+                    continue
+
+                date = datetime.strptime(row['Date'], '%m/%d/%Y')
+                merchant, category, subcategory, match_info = normalize_merchant(
+                    row['Description'], rules, amount=amount, txn_date=date.date(),
+                    data_source='AMEX',
+                )
+                location = extract_location(row['Description'])
+
+                transactions.append({
+                    'date': date,
+                    'raw_description': row['Description'],
+                    'description': row['Description'],
+                    'amount': amount,
+                    'merchant': merchant,
+                    'category': category,
+                    'subcategory': subcategory,
+                    'source': 'AMEX',
+                    'location': location,
+                    'is_travel': is_travel_location(location, home_locations),
+                    'match_info': match_info,
+                    'tags': match_info.get('tags', []) if match_info else [],
+                })
+            except (ValueError, KeyError):
+                continue
+
+    return transactions
+
+
+def parse_boa(filepath, rules, home_locations=None):
+    """Parse BOA statement file and return list of transactions.
+
+    DEPRECATED: Use format strings instead. This parser will be removed in a future release.
+    """
+    home_locations = home_locations or set()
+    transactions = []
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            # Format: MM/DD/YYYY  Description  Amount  Balance
+            match = re.match(
+                r'^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+([-\d,]+\.\d{2})\s+([-\d,]+\.\d{2})$',
+                line.strip()
+            )
+            if not match:
+                continue
+
+            try:
+                date = datetime.strptime(match.group(1), '%m/%d/%Y')
+                description = match.group(2)
+                amount = float(match.group(3).replace(',', ''))
+
+                if amount == 0:
+                    continue
+
+                merchant, category, subcategory, match_info = normalize_merchant(
+                    description, rules, amount=amount, txn_date=date.date(),
+                    data_source='BOA',
+                )
+                location = extract_location(description)
+
+                transactions.append({
+                    'date': date,
+                    'raw_description': description,
+                    'description': description,
+                    'amount': amount,
+                    'merchant': merchant,
+                    'match_info': match_info,
+                    'category': category,
+                    'subcategory': subcategory,
+                    'source': 'BOA',
+                    'location': location,
+                    'is_travel': is_travel_location(location, home_locations),
+                    'tags': match_info.get('tags', []) if match_info else [],
+                })
+            except ValueError:
+                continue
+
+    return transactions
+
+
+def _iter_rows_with_delimiter(filepath, delimiter, has_header):
+    """Iterate over rows, handling different delimiter types.
+
+    Args:
+        filepath: Path to the file
+        delimiter: None for CSV, 'tab' for TSV, or 'regex:pattern' for regex
+        has_header: Whether to skip the first line
+
+    Yields:
+        List of column values for each row
+    """
+    with open(filepath, 'r', encoding='utf-8') as f:
+        if delimiter and delimiter.startswith('regex:'):
+            # Regex-based parsing
+            pattern = re.compile(delimiter[6:])  # Strip 'regex:' prefix
+            for i, line in enumerate(f):
+                if has_header and i == 0:
+                    continue
+                line = line.strip()
+                if not line:
+                    continue
+                match = pattern.match(line)
+                if match:
+                    yield list(match.groups())
+        elif delimiter == 'tab' or delimiter == '\t':
+            # Tab-separated
+            reader = csv.reader(f, delimiter='\t')
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                yield row
+        else:
+            # Standard CSV (comma-delimited)
+            reader = csv.reader(f)
+            if has_header:
+                next(reader, None)
+            for row in reader:
+                yield row
+
+
+def parse_generic_csv(filepath, format_spec, rules, home_locations=None, source_name='CSV',
+                      decimal_separator='.', transforms=None):
+    """
+    Parse a CSV file using a custom format specification.
+
+    Args:
+        filepath: Path to the CSV file
+        format_spec: FormatSpec defining column mappings (supports delimiter option)
+        rules: Merchant categorization rules
+        home_locations: Set of location codes considered "home"
+        source_name: Name to use for transaction source (default: 'CSV')
+        decimal_separator: Character used as decimal separator ('.' or ',')
+        transforms: Optional list of (field_path, expression) tuples for field transforms
+
+    Supported delimiters (via format_spec.delimiter):
+        - None or ',': Standard CSV (comma-delimited)
+        - 'tab' or '\\t': Tab-separated values
+        - 'regex:PATTERN': Regex with capture groups for columns
+
+    Returns:
+        List of transaction dictionaries
+    """
+    home_locations = home_locations or set()
+    transactions = []
+
+    # Get delimiter from format spec
+    delimiter = getattr(format_spec, 'delimiter', None)
+
+    for row in _iter_rows_with_delimiter(filepath, delimiter, format_spec.has_header):
+        try:
+            # Ensure row has enough columns
+            required_cols = [format_spec.date_column, format_spec.amount_column]
+            if format_spec.description_column is not None:
+                required_cols.append(format_spec.description_column)
+            if format_spec.custom_captures:
+                required_cols.extend(format_spec.custom_captures.values())
+            if format_spec.extra_fields:
+                required_cols.extend(format_spec.extra_fields.values())
+            if format_spec.location_column is not None:
+                required_cols.append(format_spec.location_column)
+            max_col = max(required_cols)
+
+            if len(row) <= max_col:
+                continue  # Skip malformed rows
+
+            # Extract values
+            date_str = row[format_spec.date_column].strip()
+            amount_str = row[format_spec.amount_column].strip()
+
+            # Build description from either mode
+            # Also capture custom fields for use in rule expressions (field.name)
+            captures = {}
+            if format_spec.description_column is not None:
+                # Mode 1: Simple {description} with optional extra fields
+                description = row[format_spec.description_column].strip()
+                # Capture extra fields (e.g., {cardholder}) for rule expressions
+                if format_spec.extra_fields:
+                    for name, col_idx in format_spec.extra_fields.items():
+                        captures[name] = row[col_idx].strip() if col_idx < len(row) else ''
+            else:
+                # Mode 2: Custom captures + template
+                for name, col_idx in format_spec.custom_captures.items():
+                    captures[name] = row[col_idx].strip() if col_idx < len(row) else ''
+                description = format_spec.description_template.format(**captures)
+
+            # Skip empty rows
+            if not date_str or not description or not amount_str:
+                continue
+
+            # Parse date - handle optional day suffix (e.g., "01/02/2017  Mon")
+            # Only strip trailing text if the date format doesn't contain spaces
+            # (formats like "%d %b %y" for "30 Dec 25" need the spaces preserved)
+            if ' ' not in format_spec.date_format:
+                date_str = date_str.split()[0]  # Take just the date part
+            date = datetime.strptime(date_str, format_spec.date_format)
+
+            # Parse amount (handle locale-specific formats)
+            amount = parse_amount(amount_str, decimal_separator)
+
+            # Apply amount modifier if specified
+            if format_spec.abs_amount:
+                # Absolute value: all amounts become positive (for mixed-sign sources)
+                amount = abs(amount)
+            elif format_spec.negate_amount:
+                # Negate: flip sign (for credit cards where positive = charge)
+                amount = -amount
+
+            # Skip zero amounts
+            if amount == 0:
+                continue
+
+            # Track if this is a credit (negative amount = income/refund)
+            is_credit = amount < 0
+
+            # Extract location
+            location = None
+            if format_spec.location_column is not None:
+                location = row[format_spec.location_column].strip()
+            if not location:
+                location = extract_location(description)
+
+            # Normalize merchant
+            merchant, category, subcategory, match_info = normalize_merchant(
+                description, rules, amount=amount, txn_date=date.date(),
+                field=captures if captures else None,
+                data_source=format_spec.source_name or source_name,
+                transforms=transforms,
+                location=location,
+            )
+
+            txn = {
+                'date': date,
+                'raw_description': description,
+                'description': merchant,
+                'amount': amount,
+                'merchant': merchant,
+                'category': category,
+                'subcategory': subcategory,
+                'source': format_spec.source_name or source_name,
+                'location': location,
+                'is_travel': is_travel_location(location, home_locations),
+                'is_credit': is_credit,
+                'match_info': match_info,
+                'tags': match_info.get('tags', []) if match_info else [],
+                'excluded': None,  # No auto-exclusion; use rules to categorize
+                'field': captures if captures else None,  # Custom CSV captures for rule expressions
+            }
+            # Add _raw_* keys from transforms (e.g., _raw_description)
+            if match_info and match_info.get('raw_values'):
+                for key, value in match_info['raw_values'].items():
+                    txn[key] = value
+            transactions.append(txn)
+
+        except (ValueError, IndexError):
+            # Skip problematic rows
+            continue
+
+    return transactions
+
+
+def auto_detect_csv_format(filepath):
+    """
+    Attempt to auto-detect CSV column mapping from headers.
+
+    Looks for common header names:
+    - Date: 'date', 'trans date', 'transaction date', 'posting date'
+    - Description: 'description', 'merchant', 'payee', 'memo', 'name'
+    - Amount: 'amount', 'debit', 'charge', 'transaction amount'
+    - Location: 'location', 'city', 'state', 'city/state'
+
+    Returns:
+        FormatSpec with detected mappings
+
+    Raises:
+        ValueError: If required columns cannot be detected
+    """
+    # Common header patterns (case-insensitive, partial match)
+    DATE_PATTERNS = ['date', 'trans date', 'transaction date', 'posting date', 'trans_date']
+    DESC_PATTERNS = ['description', 'merchant', 'payee', 'memo', 'name', 'merchant name']
+    AMOUNT_PATTERNS = ['amount', 'debit', 'charge', 'transaction amount', 'payment']
+    LOCATION_PATTERNS = ['location', 'city', 'state', 'city/state', 'region']
+
+    def match_header(header, patterns):
+        header_lower = header.lower().strip()
+        return any(p in header_lower for p in patterns)
+
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        headers = next(reader, None)
+
+        if not headers:
+            raise ValueError("CSV file is empty or has no headers")
+
+    # Find column indices
+    date_col = desc_col = amount_col = location_col = None
+
+    for idx, header in enumerate(headers):
+        if date_col is None and match_header(header, DATE_PATTERNS):
+            date_col = idx
+        elif desc_col is None and match_header(header, DESC_PATTERNS):
+            desc_col = idx
+        elif amount_col is None and match_header(header, AMOUNT_PATTERNS):
+            amount_col = idx
+        elif location_col is None and match_header(header, LOCATION_PATTERNS):
+            location_col = idx
+
+    # Validate required columns found
+    missing = []
+    if date_col is None:
+        missing.append('date')
+    if desc_col is None:
+        missing.append('description')
+    if amount_col is None:
+        missing.append('amount')
+
+    if missing:
+        raise ValueError(
+            f"Could not auto-detect required columns: {missing}. "
+            f"Headers found: {headers}"
+        )
+
+    return FormatSpec(
+        date_column=date_col,
+        date_format='%m/%d/%Y',  # Default format
+        description_column=desc_col,
+        amount_column=amount_col,
+        location_column=location_col,
+        has_header=True
+    )
