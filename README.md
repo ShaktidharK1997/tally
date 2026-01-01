@@ -194,6 +194,19 @@ tags: holiday
 | `amount > 100` | Amount conditions |
 | `month == 12` | Date component (month, year, day) |
 | `date >= "2025-11-28"` | Date range |
+| `field.location` | Transaction location (from CSV) |
+| `field.memo`, etc. | Custom fields captured from CSV |
+
+**Field transforms** - Strip prefixes before matching:
+```python
+# At the top of merchants.rules
+field.description = regex_replace(field.description, "^APLPAY\\s+", "")
+field.description = regex_replace(field.description, "^SQ\\s*\\*", "")
+```
+
+Functions: `regex_replace()`, `uppercase()`, `lowercase()`, `strip_prefix()`, `strip_suffix()`, `trim()`
+
+Run `tally reference` for full documentation.
 
 **Two-pass evaluation:**
 1. **Categorization**: First matching rule with `category:` wins
