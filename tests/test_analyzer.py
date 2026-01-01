@@ -810,6 +810,95 @@ class TestAmountSignHandling:
         finally:
             os.unlink(f.name)
 
+    def test_abs_amount_with_small_amounts(self):
+        """Using {+amount} handles small positive and negative amounts."""
+        csv_content = """Date,Description,Amount
+01/15/2025,SMALL POSITIVE,0.01
+01/16/2025,SMALL NEGATIVE,-0.01
+01/17/2025,ONE CENT,-0.99
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {+amount}')
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 3
+            assert txns[0]['amount'] == 0.01  # Stays positive
+            assert txns[1]['amount'] == 0.01  # Negative becomes positive
+            assert txns[2]['amount'] == 0.99  # Negative becomes positive
+        finally:
+            os.unlink(f.name)
+
+    def test_abs_amount_with_large_amounts(self):
+        """Using {+amount} handles large positive and negative amounts."""
+        csv_content = """Date,Description,Amount
+01/15/2025,LARGE POSITIVE,"123,456.78"
+01/16/2025,LARGE NEGATIVE,"-98,765.43"
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {+amount}')
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 2
+            assert txns[0]['amount'] == 123456.78  # Stays positive
+            assert txns[1]['amount'] == 98765.43   # Negative becomes positive
+        finally:
+            os.unlink(f.name)
+
+    def test_abs_amount_excludes_nothing(self):
+        """Using {+amount} means nothing is excluded as income - all are spending."""
+        csv_content = """Date,Description,Amount
+01/15/2025,PRINCIPAL PAYMENT,500.00
+01/16/2025,TAX FROM ESCROW,-200.00
+01/17/2025,INSURANCE FROM ESCROW,-150.00
+"""
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+        try:
+            f.write(csv_content)
+            f.close()
+
+            rules = get_all_rules()
+            format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {+amount}')
+
+            from tally.analyzer import parse_generic_csv
+            txns = parse_generic_csv(f.name, format_spec, rules)
+
+            assert len(txns) == 3
+            # No transactions should be excluded
+            for txn in txns:
+                assert txn.get('excluded') is None
+            # All amounts positive
+            assert all(txn['amount'] > 0 for txn in txns)
+        finally:
+            os.unlink(f.name)
+
+    def test_abs_amount_format_spec_flag(self):
+        """Parse {+amount} sets abs_amount flag in FormatSpec."""
+        format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {+amount}')
+        assert format_spec.abs_amount == True
+        assert format_spec.negate_amount == False
+
+        format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {amount}')
+        assert format_spec.abs_amount == False
+        assert format_spec.negate_amount == False
+
+        format_spec = parse_format_string('{date:%m/%d/%Y}, {description}, {-amount}')
+        assert format_spec.abs_amount == False
+        assert format_spec.negate_amount == True
+
     def test_is_credit_flag_set_correctly(self):
         """is_credit flag is True for negative amounts."""
         csv_content = """Date,Description,Amount
