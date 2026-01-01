@@ -388,7 +388,8 @@ STARTER_MERCHANTS = '''# Tally Merchant Rules
 #   fuzzy("X")        - Approximate matching (catches typos)
 #   fuzzy("X", 0.85)  - Fuzzy with custom threshold (default 0.80)
 #   amount > 100      - Amount conditions
-#   month == 12       - Date component (month, year, day)
+#   month == 12       - Date component (month, year, day, weekday)
+#   weekday == 0      - Day of week (0=Monday, 1=Tuesday, ... 6=Sunday)
 #   date >= "2025-01-01"  - Date range
 #
 # You can combine conditions with 'and', 'or', 'not'
@@ -457,6 +458,20 @@ STARTER_MERCHANTS = '''# Tally Merchant Rules
 # match: anyof("NETFLIX", "HULU", "DISNEY+", "HBO")
 # category: Subscriptions
 # subcategory: Streaming
+
+# === Weekday-based tagging ===
+# Tag weekday vs weekend transactions differently
+
+# [Starbucks - Workdays]
+# match: contains("Starbucks") and weekday < 5  # Monday-Friday (0-4)
+# category: Food
+# subcategory: Coffee
+# tags: work
+
+# [Starbucks]
+# match: contains("Starbucks") and weekday >= 5  # Saturday-Sunday (5-6)
+# category: Food
+# subcategory: Coffee
 
 # === Add your rules below ===
 
