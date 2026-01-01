@@ -28,6 +28,9 @@ from typing import Any, Dict, List, Optional, Set, Callable, Union
 # Cache for parsed expressions (expression string -> validated AST)
 _expression_cache: Dict[str, ast.Expression] = {}
 
+# Cache for compiled regex patterns (pattern string -> compiled Pattern)
+_regex_cache: Dict[str, re.Pattern] = {}
+
 
 # =============================================================================
 # Whitelist of allowed AST nodes
@@ -151,6 +154,15 @@ class TransactionContext:
     - source: Data source name (string)
     """
 
+    __slots__ = ('description', 'amount', 'date', 'variables', 'field', 'source',
+                 'month', 'year', 'day')
+
+    # Class-level function name mapping (looked up dynamically)
+    _FUNCTION_NAMES: Set[str] = {
+        'contains', 'regex', 'normalized', 'anyof', 'startswith', 'fuzzy',
+        'abs', 'round', 'extract', 'split', 'substring', 'trim'
+    }
+
     def __init__(
         self,
         description: str = "",
@@ -177,23 +189,15 @@ class TransactionContext:
             self.year = 0
             self.day = 0
 
-        # Built-in functions for transaction matching
-        self.functions: Dict[str, Callable] = {
-            'contains': self._fn_contains,
-            'regex': self._fn_regex,
-            'normalized': self._fn_normalized,
-            'anyof': self._fn_anyof,
-            'startswith': self._fn_startswith,
-            'fuzzy': self._fn_fuzzy,
-            'abs': abs,
-            'round': round,
-            # Extraction functions
-            'extract': self._fn_extract,
-            'split': self._fn_split,
-            'substring': self._fn_substring,
-            'trim': self._fn_trim,
-            # exists() is handled specially in TransactionEvaluator._eval_Call
-        }
+    def get_function(self, name: str) -> Optional[Callable]:
+        """Get a function by name, looking up method dynamically."""
+        if name == 'abs':
+            return abs
+        if name == 'round':
+            return round
+        if name in self._FUNCTION_NAMES:
+            return getattr(self, f'_fn_{name}', None)
+        return None
 
     def _fn_contains(self, *args) -> bool:
         """Check if text contains pattern (case-insensitive).
@@ -224,7 +228,10 @@ class TransactionContext:
         else:
             raise ExpressionError("regex() requires 1 or 2 arguments: regex(pattern) or regex(text, pattern)")
         try:
-            return bool(re.search(pattern, text, re.IGNORECASE))
+            # Use cached compiled pattern
+            if pattern not in _regex_cache:
+                _regex_cache[pattern] = re.compile(pattern, re.IGNORECASE)
+            return bool(_regex_cache[pattern].search(text))
         except re.error as e:
             raise ExpressionError(f"Invalid regex pattern: {e}")
 
@@ -449,6 +456,10 @@ class ExpressionContext:
             'max_val': self._fn_max_val,
             'min_val': self._fn_min_val,
         }
+
+    def get_function(self, name: str) -> Optional[Callable]:
+        """Get a function by name."""
+        return self.functions.get(name)
 
     def get_payments(self) -> List[float]:
         """Get all payment amounts from transactions."""
@@ -760,14 +771,14 @@ class ExpressionEvaluator:
         else:
             raise ExpressionError("Only simple function calls are supported")
 
-        if func_name not in self.ctx.functions:
+        func = self.ctx.get_function(func_name)
+        if func is None:
             raise ExpressionError(f"Unknown function: {func_name}")
 
         # Evaluate arguments
         args = [self.evaluate(arg) for arg in node.args]
 
         # Call the function
-        func = self.ctx.functions[func_name]
         return func(*args)
 
     def _eval_IfExp(self, node: ast.IfExp) -> Any:
@@ -971,14 +982,14 @@ class TransactionEvaluator:
                 # Field doesn't exist - return False
                 return False
 
-        if func_name not in self.ctx.functions:
+        func = self.ctx.get_function(func_name)
+        if func is None:
             raise ExpressionError(f"Unknown function: {func_name}")
 
         # Evaluate arguments
         args = [self.evaluate(arg) for arg in node.args]
 
         # Call the function
-        func = self.ctx.functions[func_name]
         return func(*args)
 
     def _eval_IfExp(self, node: ast.IfExp) -> Any:
