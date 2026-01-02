@@ -418,6 +418,7 @@ def write_summary_file_vue(stats, filepath, year=2025, currency_format="${amount
         'numMonths': num_months,
         'sources': sources,
         'dataThrough': latest_date,
+        'currencyFormat': currency_format,  # For JS formatting (e.g., "${amount}" or "£{amount}")
         'sections': sections,
         'categoryView': category_view,
         # Cash flow (excludes transfers and investments)

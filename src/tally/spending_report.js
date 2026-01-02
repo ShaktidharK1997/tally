@@ -1440,13 +1440,27 @@ createApp({
         }
 
         // Formatting helpers
+        // Currency format from data (e.g., "${amount}", "£{amount}", "{amount} zł")
+        const currencyFormat = spendingData.value.currencyFormat || '${amount}';
+
         function formatCurrency(amount) {
-            if (amount === undefined || amount === null) return '$0';
+            if (amount === undefined || amount === null) return currencyFormat.replace('{amount}', '0');
             const rounded = Math.round(amount);
+            const absFormatted = Math.abs(rounded).toLocaleString('en-US');
+            const formatted = currencyFormat.replace('{amount}', absFormatted);
             if (rounded < 0) {
-                return '-$' + Math.abs(rounded).toLocaleString('en-US');
+                return '-' + formatted;
             }
-            return '$' + rounded.toLocaleString('en-US');
+            return formatted;
+        }
+
+        // Short format for chart Y-axis (e.g., $1k, £1k, 1k zł)
+        function formatCurrencyShort(amount) {
+            if (amount >= 1000) {
+                const k = (amount / 1000).toFixed(0);
+                return currencyFormat.replace('{amount}', k + 'k');
+            }
+            return currencyFormat.replace('{amount}', amount.toFixed(0));
         }
 
         function formatDate(dateStr) {
@@ -1645,7 +1659,7 @@ createApp({
                                 beginAtZero: true,
                                 grace: '5%',
                                 ticks: {
-                                    callback: v => v >= 1000 ? '$' + (v/1000).toFixed(0) + 'k' : '$' + v.toFixed(0)
+                                    callback: v => formatCurrencyShort(v)
                                 }
                             }
                         },
@@ -1729,7 +1743,7 @@ createApp({
                                 beginAtZero: true,
                                 grace: '5%',
                                 ticks: {
-                                    callback: v => v >= 1000 ? '$' + (v/1000).toFixed(0) + 'k' : '$' + v.toFixed(0)
+                                    callback: v => formatCurrencyShort(v)
                                 }
                             }
                         },

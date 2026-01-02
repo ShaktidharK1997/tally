@@ -1226,3 +1226,170 @@ class TestExtraFieldsSearch:
         expect(page.get_by_test_id("merchant-row-Costco")).to_be_visible()
         expect(page.get_by_test_id("merchant-row-Target")).to_be_visible()
         expect(page.get_by_test_id("merchant-row-Amazon")).to_be_visible()
+
+
+# =============================================================================
+# Currency Formatting Tests (Issue #63)
+# =============================================================================
+
+@pytest.fixture(scope="module")
+def currency_format_report_path(tmp_path_factory):
+    """Generate a test report with non-USD currency format (British Pounds).
+
+    This fixture tests that currency formatting is consistent throughout the report:
+    - Dashboard amounts
+    - Merchant totals
+    - Chart Y-axis labels
+    """
+    tmp_dir = tmp_path_factory.mktemp("currency_format_test")
+    config_dir = tmp_dir / "config"
+    data_dir = tmp_dir / "data"
+    output_dir = tmp_dir / "output"
+
+    config_dir.mkdir()
+    data_dir.mkdir()
+    output_dir.mkdir()
+
+    csv_content = """Date,Description,Amount
+01/05/2025,TESCO EXPRESS 123,85.50
+01/08/2025,SAINSBURYS 456,65.00
+01/10/2025,COSTA COFFEE,6.50
+01/15/2025,SHELL OIL 789,45.00
+01/20/2025,UBER TRIP,25.00
+02/01/2025,NETFLIX STREAMING,15.99
+02/05/2025,AMAZON UK,75.00
+"""
+    (data_dir / "transactions.csv").write_text(csv_content)
+
+    # Use British Pound currency format
+    settings_content = """year: 2025
+
+currency_format: "£{amount}"
+
+data_sources:
+  - name: Test
+    file: data/transactions.csv
+    format: "{date},{description},{amount}"
+
+merchants_file: config/merchants.rules
+"""
+    (config_dir / "settings.yaml").write_text(settings_content)
+
+    rules_content = """[Tesco]
+match: contains("TESCO")
+category: Food
+subcategory: Grocery
+
+[Sainsburys]
+match: contains("SAINSBURYS")
+category: Food
+subcategory: Grocery
+
+[Costa Coffee]
+match: contains("COSTA")
+category: Food
+subcategory: Coffee
+
+[Shell Gas]
+match: contains("SHELL")
+category: Transport
+subcategory: Gas
+
+[Uber]
+match: contains("UBER")
+category: Transport
+subcategory: Rideshare
+
+[Netflix]
+match: contains("NETFLIX")
+category: Subscriptions
+subcategory: Streaming
+
+[Amazon UK]
+match: contains("AMAZON")
+category: Shopping
+"""
+    (config_dir / "merchants.rules").write_text(rules_content)
+
+    # Generate report
+    report_path = output_dir / "spending.html"
+    subprocess.run(
+        ["uv", "run", "tally", "run", "--format", "html", "-o", str(report_path), str(config_dir)],
+        check=True,
+        capture_output=True
+    )
+
+    return str(report_path)
+
+
+class TestCurrencyFormatting:
+    """Tests for currency formatting (Issue #63).
+
+    Verifies that the currency_format setting is applied throughout the HTML report:
+    - Dashboard totals
+    - Merchant amounts
+    - Chart Y-axis labels
+    """
+
+    def test_dashboard_uses_currency_format(self, page: Page, currency_format_report_path):
+        """Dashboard total should use configured currency symbol (£)."""
+        page.goto(f"file://{currency_format_report_path}")
+
+        # The cashflow amount should show £ symbol, not $
+        cashflow_amount = page.get_by_test_id("cashflow-amount")
+        expect(cashflow_amount).to_be_visible()
+        amount_text = cashflow_amount.text_content()
+
+        # Should contain £ and not $
+        assert "£" in amount_text, f"Expected £ in cashflow amount, got: {amount_text}"
+        assert "$" not in amount_text, f"Found $ in cashflow amount, expected £: {amount_text}"
+
+    def test_merchant_amounts_use_currency_format(self, page: Page, currency_format_report_path):
+        """Merchant amounts should use configured currency symbol (£)."""
+        page.goto(f"file://{currency_format_report_path}")
+
+        # Find a merchant row and check its total
+        merchant_total = page.get_by_test_id("merchant-total").first
+        expect(merchant_total).to_be_visible()
+        amount_text = merchant_total.text_content()
+
+        assert "£" in amount_text, f"Expected £ in merchant amount, got: {amount_text}"
+        assert "$" not in amount_text, f"Found $ in merchant amount, expected £: {amount_text}"
+
+    def test_chart_yaxis_uses_currency_format(self, page: Page, currency_format_report_path):
+        """Chart Y-axis should use configured currency symbol (£)."""
+        page.goto(f"file://{currency_format_report_path}")
+        page.wait_for_timeout(500)  # Wait for Chart.js to render
+
+        # Access the Chart.js instance and check Y-axis ticks
+        result = page.evaluate("""() => {
+            const canvas = document.querySelector('canvas');
+            if (!canvas) return { error: 'No canvas found' };
+
+            const chartInstance = Chart.getChart(canvas);
+            if (!chartInstance) return { error: 'No chart instance found' };
+
+            // Get Y-axis tick values by looking at the scale
+            const yScale = chartInstance.scales.y;
+            if (!yScale) return { error: 'No Y scale found' };
+
+            // Get the formatted tick labels
+            const ticks = yScale.ticks.map(t => {
+                return yScale.options.ticks.callback(t.value);
+            });
+
+            return { ticks };
+        }""")
+
+        if 'error' in result:
+            pytest.fail(f"Could not access chart data: {result['error']}")
+
+        ticks = result['ticks']
+
+        # At least one tick should contain £ symbol
+        has_pound = any('£' in str(tick) for tick in ticks if tick)
+        assert has_pound, f"Expected £ symbol in chart Y-axis ticks, got: {ticks}"
+
+        # No tick should contain $ symbol
+        has_dollar = any('$' in str(tick) for tick in ticks if tick)
+        assert not has_dollar, f"Found $ in chart ticks, expected £: {ticks}"

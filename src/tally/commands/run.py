@@ -189,7 +189,7 @@ def cmd_run(args):
     elif output_format == 'markdown':
         # Markdown output with reasoning
         from ..analyzer import export_markdown
-        print(export_markdown(stats, verbose=verbose, category_filter=category_filter))
+        print(export_markdown(stats, verbose=verbose, category_filter=category_filter, currency_format=currency_format))
     elif output_format == 'summary' or args.summary:
         # Text summary only (no HTML)
         if stats.get('sections'):

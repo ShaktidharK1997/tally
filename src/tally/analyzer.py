@@ -443,7 +443,7 @@ def export_json(stats, verbose=0, category_filter=None, merchant_filter=None):
     return json.dumps(output, indent=2)
 
 
-def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None):
+def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None, currency_format="${amount}"):
     """Export analysis results as Markdown with reasoning.
 
     Args:
@@ -451,9 +451,20 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
         verbose: Verbosity level (0=basic, 1=trace, 2=full)
         category_filter: Only include merchants in this category
         merchant_filter: Only include these merchants (list of names)
+        currency_format: Format string for currency (e.g. "${amount}" or "£{amount}")
 
     Returns: Markdown string
     """
+    # Local helper for currency formatting
+    def fmt(amount, show_sign=False):
+        """Format amount with currency. If show_sign=True, prefix with + for positive."""
+        formatted = format_currency_decimal(abs(amount), currency_format)
+        if show_sign and amount >= 0:
+            return '+' + formatted
+        elif amount < 0:
+            return '-' + formatted
+        return formatted
+
     by_merchant = stats.get('by_merchant', {})
     by_month = stats.get('by_month', {})
     by_category = stats.get('by_category', {})
@@ -473,21 +484,19 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
     lines.append('## Cash Flow\n')
     lines.append(f"| Item | Amount |")
     lines.append(f"|------|--------|")
-    lines.append(f"| Income | +${income_total:,.2f} |")
-    lines.append(f"| Spending | -${spending_total:,.2f} |")
-    lines.append(f"| Credits/Refunds | +${abs(credits_total):,.2f} |")
-    sign = '+' if cash_flow >= 0 else ''
-    lines.append(f"| **Net Cash Flow** | **{sign}${cash_flow:,.2f}** |")
+    lines.append(f"| Income | {fmt(income_total, show_sign=True)} |")
+    lines.append(f"| Spending | {fmt(-spending_total)} |")
+    lines.append(f"| Credits/Refunds | {fmt(credits_total, show_sign=True)} |")
+    lines.append(f"| **Net Cash Flow** | **{fmt(cash_flow, show_sign=True)}** |")
     lines.append('')
 
     # Transfers Summary
     lines.append('## Transfers\n')
     lines.append(f"| Item | Amount |")
     lines.append(f"|------|--------|")
-    lines.append(f"| In | +${transfers_in:,.2f} |")
-    lines.append(f"| Out | ${transfers_out:,.2f} |")
-    sign = '+' if transfers_net >= 0 else ''
-    lines.append(f"| **Net Transfers** | **{sign}${transfers_net:,.2f}** |")
+    lines.append(f"| In | {fmt(transfers_in, show_sign=True)} |")
+    lines.append(f"| Out | {fmt(transfers_out)} |")
+    lines.append(f"| **Net Transfers** | **{fmt(transfers_net, show_sign=True)}** |")
     lines.append(f"- **Data Period:** {stats['num_months']} months\n")
 
     # Monthly Breakdown
@@ -497,7 +506,7 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
         lines.append('|-------|----------|--------------|')
         for month in sorted(by_month.keys()):
             data = by_month[month]
-            lines.append(f"| {month} | ${data['total']:,.2f} | {data['count']} |")
+            lines.append(f"| {month} | {fmt(data['total'])} | {data['count']} |")
         lines.append('')
 
     # Credits/Refunds
@@ -507,8 +516,8 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
         lines.append('| Merchant | Category | Amount |')
         lines.append('|----------|----------|--------|')
         for name, data in sorted(credit_merchants, key=lambda x: x[1]['total']):
-            lines.append(f"| {name} | {data.get('category', '')} | +${abs(data['total']):,.2f} |")
-        lines.append(f"| **Total** | | **+${credits_total:,.2f}** |")
+            lines.append(f"| {name} | {data.get('category', '')} | {fmt(data['total'], show_sign=True)} |")
+        lines.append(f"| **Total** | | **{fmt(credits_total, show_sign=True)}** |")
         lines.append('')
 
     # By Category
@@ -518,7 +527,7 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
     positive_cats = [(k, v) for k, v in by_category.items() if v['total'] > 0]
     for (cat, subcat), data in sorted(positive_cats, key=lambda x: x[1]['total'], reverse=True)[:15]:
         pct = (data['total'] / gross_spending * 100) if gross_spending > 0 else 0
-        lines.append(f"| {cat} | {subcat} | ${data['total']:,.2f} | {pct:.1f}% |")
+        lines.append(f"| {cat} | {subcat} | {fmt(data['total'])} | {pct:.1f}% |")
     lines.append('')
 
     # Merchants
@@ -543,8 +552,8 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
 
         lines.append(f"### {name}")
         lines.append(f"**Category:** {data.get('category', '')} > {data.get('subcategory', '')}")
-        lines.append(f"**Monthly Value:** ${data.get('monthly_value', 0):.2f}")
-        lines.append(f"**YTD Total:** ${data.get('total', 0):.2f}")
+        lines.append(f"**Monthly Value:** {fmt(data.get('monthly_value', 0))}")
+        lines.append(f"**YTD Total:** {fmt(data.get('total', 0))}")
         lines.append(f"**Months Active:** {data.get('months_active', 0)}/{stats['num_months']}")
 
         # Verbose: add decision trace
