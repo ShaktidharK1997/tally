@@ -588,37 +588,37 @@ def _warn_deprecated_parser(source_name, parser_type, filepath):
         _deprecated_parser_warnings.append(warning)
 
 def _print_deprecation_warnings(config=None):
-    """Print all collected deprecation warnings."""
+    """Print all collected deprecation warnings to stderr (to avoid breaking JSON output)."""
     has_warnings = False
 
     # Print config-based warnings (more detailed, from config_loader)
     if config and config.get('_warnings'):
         has_warnings = True
-        print()
-        print(f"{C.YELLOW}{'=' * 70}{C.RESET}")
-        print(f"{C.YELLOW}DEPRECATION WARNINGS{C.RESET}")
-        print(f"{C.YELLOW}{'=' * 70}{C.RESET}")
+        print(file=sys.stderr)
+        print(f"{C.YELLOW}{'=' * 70}{C.RESET}", file=sys.stderr)
+        print(f"{C.YELLOW}DEPRECATION WARNINGS{C.RESET}", file=sys.stderr)
+        print(f"{C.YELLOW}{'=' * 70}{C.RESET}", file=sys.stderr)
         for warning in config['_warnings']:
-            print()
-            print(f"{C.YELLOW}⚠ {warning['message']}{C.RESET}")
-            print(f"  {warning['suggestion']}")
+            print(file=sys.stderr)
+            print(f"{C.YELLOW}⚠ {warning['message']}{C.RESET}", file=sys.stderr)
+            print(f"  {warning['suggestion']}", file=sys.stderr)
             if 'example' in warning:
-                print()
-                print(f"  {C.DIM}Suggested config:{C.RESET}")
+                print(file=sys.stderr)
+                print(f"  {C.DIM}Suggested config:{C.RESET}", file=sys.stderr)
                 for line in warning['example'].split('\n'):
-                    print(f"  {C.GREEN}{line}{C.RESET}")
-        print()
+                    print(f"  {C.GREEN}{line}{C.RESET}", file=sys.stderr)
+        print(file=sys.stderr)
 
     # Print legacy parser warnings (if not already covered by config warnings)
     # Skip these if config warnings already exist (they're duplicates)
     if _deprecated_parser_warnings and not has_warnings:
-        print()
+        print(file=sys.stderr)
         for source_name, parser_type, filepath in _deprecated_parser_warnings:
-            print(f"{C.YELLOW}Warning:{C.RESET} The '{parser_type}' parser is deprecated and will be removed in a future release.")
-            print(f"  Source: {source_name}")
-            print(f"  Run: {C.GREEN}tally inspect {filepath}{C.RESET} to get a format string for your CSV.")
-            print(f"  Then update settings.yaml to use 'format:' instead of 'type: {parser_type}'")
-            print()
+            print(f"{C.YELLOW}Warning:{C.RESET} The '{parser_type}' parser is deprecated and will be removed in a future release.", file=sys.stderr)
+            print(f"  Source: {source_name}", file=sys.stderr)
+            print(f"  Run: {C.GREEN}tally inspect {filepath}{C.RESET} to get a format string for your CSV.", file=sys.stderr)
+            print(f"  Then update settings.yaml to use 'format:' instead of 'type: {parser_type}'", file=sys.stderr)
+            print(file=sys.stderr)
 
     _deprecated_parser_warnings.clear()
 
