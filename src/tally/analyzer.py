@@ -568,6 +568,9 @@ def export_markdown(stats, verbose=0, category_filter=None, merchant_filter=None
 
 def print_summary(stats, year=2025, filter_category=None, currency_format="${amount}"):
     """Print analysis summary."""
+    # Lazy import to avoid circular dependency
+    from .cli import C
+
     # Local helper for currency formatting
     def fmt(amount):
         return format_currency(amount, currency_format)
@@ -702,6 +705,9 @@ def print_sections_summary(stats, year=2025, currency_format="${amount}", only_f
         currency_format: Format string for currency
         only_filter: Optional list of section names (lowercase) to show
     """
+    # Lazy import to avoid circular dependency
+    from .cli import C
+
     def fmt(amount):
         return format_currency(amount, currency_format)
 
@@ -767,12 +773,34 @@ def print_sections_summary(stats, year=2025, currency_format="${amount}", only_f
         if len(sorted_merchants) > 20:
             print(f"  ... and {len(sorted_merchants) - 20} more merchants")
 
-    # Use transaction-level spending total from stats (matches HTML Cash Flow)
+    # Use transaction-level totals from stats (matches HTML Cash Flow card)
     spending_total = stats.get('spending_total', 0)
-    monthly_avg = spending_total / num_months if num_months > 0 else 0
+    income_total = stats.get('income_total', 0)
+    credits_total = stats.get('credits_total', 0)
+    cash_flow = stats.get('cash_flow', 0)
+    investment_total = stats.get('investment_total', 0)
+    monthly_spending = spending_total / num_months if num_months > 0 else 0
 
     print()
-    print(f"TOTAL SPENDING: {fmt(spending_total)}/yr · {fmt(monthly_avg)}/mo")
+    print(f"{C.BOLD}TOTAL SPENDING:{C.RESET} {C.CYAN}{fmt(spending_total)}/yr{C.RESET} · {C.DIM}{fmt(monthly_spending)}/mo{C.RESET}")
+    print("=" * 80)
+
+    # Cash flow summary (aligns with HTML report)
+    print()
+    print(f"{C.BOLD}CASH FLOW SUMMARY{C.RESET}")
+    print(f"{C.DIM}{'-' * 40}{C.RESET}")
+    print(f"  {C.DIM}Income:{C.RESET}      {C.GREEN}+{fmt(income_total)}{C.RESET}")
+    print(f"  {C.DIM}Spending:{C.RESET}    {C.RED}-{fmt(spending_total)}{C.RESET}")
+    if credits_total > 0:
+        print(f"  {C.DIM}Credits:{C.RESET}     {C.GREEN}+{fmt(credits_total)}{C.RESET}")
+    print(f"               {C.DIM}{'-' * 15}{C.RESET}")
+    if cash_flow >= 0:
+        print(f"  {C.BOLD}Cash Flow:{C.RESET}   {C.GREEN}+{fmt(cash_flow)}{C.RESET}")
+    else:
+        print(f"  {C.BOLD}Cash Flow:{C.RESET}   {C.RED}{fmt(cash_flow)}{C.RESET}")
+    if investment_total > 0:
+        print()
+        print(f"  {C.DIM}Investments:{C.RESET} {C.CYAN}{fmt(investment_total)}{C.RESET} {C.DIM}(401K, IRA, etc.){C.RESET}")
     print("=" * 80)
 
 
