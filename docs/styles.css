@@ -1,0 +1,564 @@
+/* Tally Documentation - Shared Styles */
+
+/* ==========================================================================
+   Reset & Base
+   ========================================================================== */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: linear-gradient(135deg, #0a1f0a 0%, #0d2818 50%, #061a12 100%);
+    color: #fff;
+    min-height: 100vh;
+    line-height: 1.6;
+}
+
+/* ==========================================================================
+   Navigation
+   ========================================================================== */
+
+nav {
+    background: rgba(0,0,0,0.3);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    padding: 1rem 2rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+}
+
+nav .nav-inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+}
+
+nav .nav-logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #4ade80;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+nav .nav-logo img {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+nav .nav-links {
+    display: flex;
+    gap: 1.5rem;
+    flex: 1;
+}
+
+nav .nav-links a {
+    color: rgba(255,255,255,0.6);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s;
+}
+
+nav .nav-links a:hover,
+nav .nav-links a.active {
+    color: #4ade80;
+}
+
+nav .nav-github {
+    color: rgba(255,255,255,0.6);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s;
+}
+
+nav .nav-github:hover {
+    color: #4ade80;
+}
+
+/* ==========================================================================
+   Hamburger Menu (Mobile)
+   ========================================================================== */
+
+.hamburger {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    cursor: pointer;
+    padding: 0.5rem;
+    margin-left: auto;
+}
+
+.hamburger span {
+    width: 20px;
+    height: 2px;
+    background: rgba(255,255,255,0.8);
+    transition: all 0.3s;
+}
+
+.hamburger.active span:nth-child(1) {
+    transform: rotate(45deg) translate(4px, 4px);
+}
+
+.hamburger.active span:nth-child(2) {
+    opacity: 0;
+}
+
+.hamburger.active span:nth-child(3) {
+    transform: rotate(-45deg) translate(4px, -4px);
+}
+
+.close-menu {
+    display: none;
+}
+
+/* ==========================================================================
+   Documentation Page Shared Styles
+   ========================================================================== */
+
+.doc-container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 3rem 2rem 5rem;
+}
+
+.doc-container h1 {
+    font-size: 2.5rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, #4ade80, #22c55e);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+}
+
+.doc-container .subtitle {
+    color: rgba(255,255,255,0.6);
+    font-size: 1.1rem;
+    margin-bottom: 3rem;
+}
+
+.doc-container h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #fff;
+    margin: 2.5rem 0 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.doc-container h2:first-of-type {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+.doc-container h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: rgba(255,255,255,0.95);
+    margin: 1.5rem 0 0.75rem;
+}
+
+.doc-container p {
+    color: rgba(255,255,255,0.8);
+    margin-bottom: 1rem;
+}
+
+.doc-container ul, .doc-container ol {
+    color: rgba(255,255,255,0.8);
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+.doc-container li {
+    margin-bottom: 0.5rem;
+}
+
+.doc-container a {
+    color: #4ade80;
+    text-decoration: none;
+}
+
+.doc-container a:hover {
+    text-decoration: underline;
+}
+
+/* Code blocks */
+.doc-container pre {
+    background: #0d0d0d;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+
+.doc-container code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+}
+
+.doc-container p code,
+.doc-container li code {
+    background: rgba(255,255,255,0.08);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+}
+
+/* Command prompt styling */
+.doc-container .cmd::before {
+    content: '$ ';
+    color: #4ade80;
+}
+
+/* Syntax highlighting */
+.doc-container .comment {
+    color: rgba(255,255,255,0.4);
+}
+
+.doc-container .highlight {
+    color: #4ade80;
+}
+
+.doc-container .keyword {
+    color: #c084fc;
+}
+
+.doc-container .string {
+    color: #fbbf24;
+}
+
+/* Anchor links for headings */
+.doc-container h2[id],
+.doc-container h3[id] {
+    position: relative;
+}
+
+.doc-container h2[id] .anchor-link,
+.doc-container h3[id] .anchor-link {
+    position: absolute;
+    left: -1.5rem;
+    color: rgba(255,255,255,0.2);
+    text-decoration: none;
+    font-weight: normal;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.doc-container h2[id]:hover .anchor-link,
+.doc-container h3[id]:hover .anchor-link {
+    opacity: 1;
+}
+
+.doc-container h2[id] .anchor-link:hover,
+.doc-container h3[id] .anchor-link:hover {
+    color: #4ade80;
+}
+
+/* ==========================================================================
+   Callout Boxes
+   ========================================================================== */
+
+.callout {
+    background: rgba(74, 222, 128, 0.05);
+    border: 1px solid rgba(74, 222, 128, 0.15);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.callout-title {
+    font-weight: 600;
+    color: #4ade80;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.callout p {
+    margin-bottom: 0;
+}
+
+/* Note box (blue) */
+.note {
+    background: rgba(96, 165, 250, 0.1);
+    border: 1px solid rgba(96, 165, 250, 0.2);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+}
+
+.note-title {
+    font-weight: 600;
+    color: #60a5fa;
+    margin-bottom: 0.5rem;
+}
+
+.note p {
+    margin-bottom: 0;
+    color: rgba(255,255,255,0.8);
+}
+
+/* Tip box (green) */
+.tip {
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin: 1rem 0;
+}
+
+.tip-title {
+    font-weight: 600;
+    color: #4ade80;
+    margin-bottom: 0.5rem;
+}
+
+.tip p {
+    margin-bottom: 0;
+    color: rgba(255,255,255,0.8);
+}
+
+/* ==========================================================================
+   Tables
+   ========================================================================== */
+
+.doc-container table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.9rem;
+}
+
+.doc-container th {
+    text-align: left;
+    padding: 0.75rem 1rem;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.9);
+    font-weight: 600;
+}
+
+.doc-container td {
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.8);
+}
+
+.doc-container tr:hover td {
+    background: rgba(255,255,255,0.02);
+}
+
+/* ==========================================================================
+   Table of Contents
+   ========================================================================== */
+
+.toc {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.toc-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(255,255,255,0.5);
+    margin-bottom: 1rem;
+}
+
+.toc-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem 2rem;
+}
+
+.toc a {
+    color: rgba(255,255,255,0.7);
+    text-decoration: none;
+    font-size: 0.9rem;
+    display: block;
+    padding: 0.25rem 0;
+}
+
+.toc a:hover {
+    color: #4ade80;
+}
+
+/* ==========================================================================
+   Install Cards
+   ========================================================================== */
+
+.install-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.install-card {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.install-header {
+    background: rgba(255,255,255,0.03);
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.install-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.install-dots span {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+}
+
+.install-label {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: rgba(255,255,255,0.4);
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.install-body {
+    padding: 1rem;
+}
+
+.install-code {
+    background: transparent;
+    border: none;
+    color: #4ade80;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.install-code::before {
+    content: '$';
+    color: rgba(255,255,255,0.4);
+}
+
+.copy-btn {
+    margin-left: auto;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    color: rgba(255,255,255,0.6);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: all 0.2s;
+}
+
+.copy-btn:hover {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+}
+
+/* ==========================================================================
+   Mobile Responsive
+   ========================================================================== */
+
+@media (max-width: 768px) {
+    nav {
+        padding: 1rem 1.5rem;
+    }
+
+    .hamburger {
+        display: flex;
+    }
+
+    nav .nav-links {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #0a1a0a;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 0.5rem;
+        z-index: 200;
+    }
+
+    nav .nav-links.active {
+        display: flex;
+    }
+
+    nav .nav-links a {
+        padding: 1rem 2rem;
+        font-size: 1.25rem;
+        font-weight: 500;
+        width: 100%;
+        text-align: center;
+    }
+
+    nav .nav-github {
+        display: none;
+    }
+
+    nav .nav-links .mobile-github {
+        display: block !important;
+    }
+
+    nav .nav-links .close-menu {
+        display: block;
+        position: absolute;
+        top: 1rem;
+        right: 1.5rem;
+        font-size: 2rem;
+        color: rgba(255,255,255,0.6);
+        cursor: pointer;
+        padding: 0.5rem;
+    }
+
+    nav .nav-links .close-menu:hover {
+        color: #4ade80;
+    }
+
+    /* Documentation pages */
+    .doc-container {
+        padding: 2rem 1.5rem 3rem;
+    }
+
+    .doc-container h1 {
+        font-size: 2rem;
+    }
+
+    .toc-columns {
+        grid-template-columns: 1fr;
+    }
+}
