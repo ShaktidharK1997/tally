@@ -24,6 +24,7 @@ def cmd_update(args):
     # Get release info (may fail if offline or rate-limited)
     release_info = get_latest_release_info(prerelease=args.prerelease)
     has_update = False
+    is_prerelease_to_stable = False
 
     if release_info:
         latest = release_info['version']
@@ -33,9 +34,17 @@ def cmd_update(args):
         from .._version import _version_greater
         has_update = _version_greater(latest, current)
 
+        # Special case: user is on prerelease (-dev) and checking for stable
+        # Offer to switch to stable even if stable has lower base version
+        if not args.prerelease and '-dev' in current and '-dev' not in latest:
+            is_prerelease_to_stable = True
+            has_update = True  # Always offer stable when on prerelease
+
         if has_update:
             if args.prerelease:
                 print(f"Development build available: v{latest} (current: v{current})")
+            elif is_prerelease_to_stable:
+                print(f"Stable release available: v{latest} (current: v{current})")
             else:
                 print(f"New version available: v{latest} (current: v{current})")
         else:
