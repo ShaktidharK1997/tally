@@ -10,8 +10,9 @@ from .._version import (
     perform_update,
 )
 
-# Import shared utilities from parent cli module
-from ..cli import find_config_dir, run_migrations
+# Import shared utilities
+from ..cli import find_config_dir
+from ..migrations import run_migrations
 
 
 def cmd_update(args):
