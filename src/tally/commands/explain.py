@@ -7,7 +7,7 @@ import sys
 
 from ..colors import C
 from ..cli_utils import (
-    find_config_dir,
+    resolve_config_dir,
     check_deprecated_description_cleaning,
     warn_deprecated_parser,
     print_deprecation_warnings,
@@ -22,25 +22,16 @@ def cmd_explain(args):
     """Handle the 'explain' subcommand - explain merchant classifications."""
     from difflib import get_close_matches
 
-    # Determine config directory
-    # Check if last merchant arg looks like a config path
-    config_dir = None
+    # Handle merchant args - check if last arg looks like a config path
     merchant_names = args.merchant if args.merchant else []
 
     if merchant_names and os.path.isdir(merchant_names[-1]):
-        # Last arg is a directory, treat it as config
-        config_dir = os.path.abspath(merchant_names[-1])
+        # Last arg is a directory, treat it as config and remove from merchants
+        args.config = merchant_names[-1]
         merchant_names = merchant_names[:-1]
-    elif args.config:
-        config_dir = os.path.abspath(args.config)
-    else:
-        config_dir = find_config_dir()
 
-    if not config_dir or not os.path.isdir(config_dir):
-        print("Error: Config directory not found.", file=sys.stderr)
-        print("Looked for: ./config and ./tally/config", file=sys.stderr)
-        print(f"\nRun '{C.GREEN}tally init{C.RESET}' to create a new budget directory.", file=sys.stderr)
-        sys.exit(1)
+    # Resolve config directory using standard logic
+    config_dir = resolve_config_dir(args)
 
     # Load configuration
     try:
