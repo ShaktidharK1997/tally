@@ -449,7 +449,11 @@ nav .nav-github:hover {
 }
 
 .install-body {
-    padding: 1rem;
+    padding: 1rem 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
 }
 
 .install-code {
@@ -458,32 +462,37 @@ nav .nav-github:hover {
     color: #4ade80;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.85rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
+    white-space: nowrap;
+    overflow-x: auto;
+    flex: 1;
+    min-width: 0;
 }
 
 .install-code::before {
-    content: '$';
+    content: '$ ';
     color: rgba(255,255,255,0.4);
 }
 
 .copy-btn {
-    margin-left: auto;
     background: rgba(255,255,255,0.1);
     border: none;
     color: rgba(255,255,255,0.6);
-    padding: 0.25rem 0.5rem;
+    padding: 0.4rem 0.6rem;
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.75rem;
     transition: all 0.2s;
+    flex-shrink: 0;
 }
 
 .copy-btn:hover {
-    background: rgba(255,255,255,0.15);
-    color: #fff;
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
+}
+
+.copy-btn.copied {
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
 }
 
 /* ==========================================================================
