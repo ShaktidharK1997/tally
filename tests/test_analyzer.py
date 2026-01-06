@@ -2292,3 +2292,149 @@ subcategory: Other
             assert 'streaming' not in txns[1]['tags']
 
             clear_engine_cache()
+
+
+class TestReportDiff:
+    """Tests for report diff functionality."""
+
+    def test_compare_reports_no_changes(self):
+        """Identical reports should show no changes."""
+        from tally.analyzer import compare_reports, has_changes
+
+        data = {
+            'summary': {'spending_total': 1000, 'income_total': 5000},
+            'merchants': [
+                {'name': 'Amazon', 'total': 500, 'tags': ['online'], 'category': 'Shopping', 'subcategory': 'Online'},
+            ]
+        }
+
+        diff = compare_reports(data, data)
+        assert not has_changes(diff)
+        assert diff['summary_changes'] == {}
+        assert diff['new_merchants'] == []
+        assert diff['removed_merchants'] == []
+        assert diff['tag_changes'] == []
+
+    def test_compare_reports_summary_changes(self):
+        """Summary total changes should be detected."""
+        from tally.analyzer import compare_reports, has_changes
+
+        prev = {'summary': {'spending_total': 1000, 'income_total': 5000}, 'merchants': []}
+        curr = {'summary': {'spending_total': 1200, 'income_total': 5000}, 'merchants': []}
+
+        diff = compare_reports(prev, curr)
+        assert has_changes(diff)
+        assert 'spending_total' in diff['summary_changes']
+        assert diff['summary_changes']['spending_total']['prev'] == 1000
+        assert diff['summary_changes']['spending_total']['curr'] == 1200
+        assert diff['summary_changes']['spending_total']['delta'] == 200
+
+    def test_compare_reports_new_merchant(self):
+        """New merchants should be detected."""
+        from tally.analyzer import compare_reports, has_changes
+
+        prev = {'summary': {}, 'merchants': []}
+        curr = {'summary': {}, 'merchants': [
+            {'name': 'Netflix', 'total': 15, 'tags': [], 'category': 'Subscriptions', 'subcategory': 'Streaming'}
+        ]}
+
+        diff = compare_reports(prev, curr)
+        assert has_changes(diff)
+        assert len(diff['new_merchants']) == 1
+        assert diff['new_merchants'][0]['name'] == 'Netflix'
+
+    def test_compare_reports_removed_merchant(self):
+        """Removed merchants should be detected."""
+        from tally.analyzer import compare_reports, has_changes
+
+        prev = {'summary': {}, 'merchants': [
+            {'name': 'Netflix', 'total': 15, 'tags': [], 'category': 'Subscriptions', 'subcategory': ''}
+        ]}
+        curr = {'summary': {}, 'merchants': []}
+
+        diff = compare_reports(prev, curr)
+        assert has_changes(diff)
+        assert len(diff['removed_merchants']) == 1
+        assert diff['removed_merchants'][0]['name'] == 'Netflix'
+
+    def test_compare_reports_tag_changes(self):
+        """Tag additions and removals should be detected."""
+        from tally.analyzer import compare_reports, has_changes
+
+        prev = {'summary': {}, 'merchants': [
+            {'name': 'Amazon', 'total': 500, 'tags': ['online', 'shopping'], 'category': 'Shopping', 'subcategory': ''}
+        ]}
+        curr = {'summary': {}, 'merchants': [
+            {'name': 'Amazon', 'total': 500, 'tags': ['online', 'prime'], 'category': 'Shopping', 'subcategory': ''}
+        ]}
+
+        diff = compare_reports(prev, curr)
+        assert has_changes(diff)
+        assert len(diff['tag_changes']) == 1
+        assert diff['tag_changes'][0]['name'] == 'Amazon'
+        assert 'shopping' in diff['tag_changes'][0]['lost']
+        assert 'prime' in diff['tag_changes'][0]['gained']
+
+    def test_compare_reports_category_changes(self):
+        """Category changes should be detected."""
+        from tally.analyzer import compare_reports, has_changes
+
+        prev = {'summary': {}, 'merchants': [
+            {'name': 'Uber', 'total': 100, 'tags': [], 'category': 'Transport', 'subcategory': 'Rideshare'}
+        ]}
+        curr = {'summary': {}, 'merchants': [
+            {'name': 'Uber', 'total': 100, 'tags': [], 'category': 'Food', 'subcategory': 'Delivery'}
+        ]}
+
+        diff = compare_reports(prev, curr)
+        assert has_changes(diff)
+        assert len(diff['category_changes']) == 1
+        assert diff['category_changes'][0]['name'] == 'Uber'
+        assert diff['category_changes'][0]['prev_category'] == 'Transport'
+        assert diff['category_changes'][0]['curr_category'] == 'Food'
+
+    def test_format_diff_summary_no_changes(self):
+        """Format summary should return empty string when no changes."""
+        from tally.analyzer import compare_reports, format_diff_summary
+
+        data = {'summary': {}, 'merchants': []}
+        diff = compare_reports(data, data)
+        assert format_diff_summary(diff) == ""
+
+    def test_format_diff_summary_with_changes(self):
+        """Format summary should include change counts."""
+        from tally.analyzer import compare_reports, format_diff_summary
+
+        prev = {'summary': {'spending_total': 1000}, 'merchants': [
+            {'name': 'Old', 'total': 50, 'tags': [], 'category': 'X', 'subcategory': ''}
+        ]}
+        curr = {'summary': {'spending_total': 1200}, 'merchants': [
+            {'name': 'New', 'total': 100, 'tags': [], 'category': 'Y', 'subcategory': ''}
+        ]}
+
+        diff = compare_reports(prev, curr)
+        summary = format_diff_summary(diff)
+
+        assert "Changes since last run" in summary
+        assert "+1 new" in summary
+        assert "1 removed" in summary
+
+    def test_format_diff_detailed(self):
+        """Format detailed should include merchant names."""
+        from tally.analyzer import compare_reports, format_diff_detailed
+
+        prev = {'summary': {}, 'merchants': [
+            {'name': 'Amazon', 'total': 500, 'tags': ['shopping'], 'category': 'Shopping', 'subcategory': ''}
+        ]}
+        curr = {'summary': {}, 'merchants': [
+            {'name': 'Amazon', 'total': 500, 'tags': ['online'], 'category': 'Shopping', 'subcategory': ''},
+            {'name': 'Netflix', 'total': 15, 'tags': [], 'category': 'Subscriptions', 'subcategory': 'Streaming'}
+        ]}
+
+        diff = compare_reports(prev, curr)
+        detailed = format_diff_detailed(diff)
+
+        assert "REPORT DIFF" in detailed
+        assert "Netflix" in detailed
+        assert "Amazon" in detailed
+        assert "lost 'shopping'" in detailed

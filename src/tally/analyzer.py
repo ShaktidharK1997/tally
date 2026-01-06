@@ -9,6 +9,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from . import section_engine
+from .colors import C
 from .classification import (
     categorize_amount,
     normalize_amount,
@@ -868,5 +869,232 @@ def print_sections_summary(stats, title=None, currency_format="${amount}", only_
         print()
         print(f"  {C.DIM}Investments:{C.RESET} {C.CYAN}{fmt(investment_total)}{C.RESET} {C.DIM}(401K, IRA, etc.){C.RESET}")
     print("=" * 80)
+
+
+# =============================================================================
+# REPORT DIFF - Compare current vs previous report
+# =============================================================================
+
+def compare_reports(prev_data: dict, curr_data: dict) -> dict:
+    """Compare two report JSON structures and return differences.
+
+    Args:
+        prev_data: Previous report data (parsed JSON)
+        curr_data: Current report data (parsed JSON)
+
+    Returns:
+        Dict with: summary_changes, new_merchants, removed_merchants,
+                   tag_changes, category_changes
+    """
+    diff = {
+        'summary_changes': {},
+        'new_merchants': [],
+        'removed_merchants': [],
+        'tag_changes': [],
+        'category_changes': [],
+    }
+
+    # Compare summary totals
+    prev_summary = prev_data.get('summary', {})
+    curr_summary = curr_data.get('summary', {})
+
+    for key in ['spending_total', 'income_total', 'cash_flow', 'transfers_total', 'credits_total']:
+        prev_val = prev_summary.get(key, 0)
+        curr_val = curr_summary.get(key, 0)
+        if prev_val != curr_val:
+            diff['summary_changes'][key] = {
+                'prev': prev_val,
+                'curr': curr_val,
+                'delta': curr_val - prev_val
+            }
+
+    # Build merchant lookups
+    prev_merchants = {m['name']: m for m in prev_data.get('merchants', [])}
+    curr_merchants = {m['name']: m for m in curr_data.get('merchants', [])}
+
+    prev_names = set(prev_merchants.keys())
+    curr_names = set(curr_merchants.keys())
+
+    # New merchants
+    for name in sorted(curr_names - prev_names):
+        m = curr_merchants[name]
+        diff['new_merchants'].append({
+            'name': name,
+            'total': m.get('total', 0),
+            'category': m.get('category', ''),
+            'subcategory': m.get('subcategory', ''),
+        })
+
+    # Removed merchants
+    for name in sorted(prev_names - curr_names):
+        m = prev_merchants[name]
+        diff['removed_merchants'].append({
+            'name': name,
+            'total': m.get('total', 0),
+            'category': m.get('category', ''),
+        })
+
+    # Tag and category changes for existing merchants
+    for name in sorted(prev_names & curr_names):
+        prev_m = prev_merchants[name]
+        curr_m = curr_merchants[name]
+
+        prev_tags = set(prev_m.get('tags', []))
+        curr_tags = set(curr_m.get('tags', []))
+
+        if prev_tags != curr_tags:
+            lost = prev_tags - curr_tags
+            gained = curr_tags - prev_tags
+            diff['tag_changes'].append({
+                'name': name,
+                'lost': sorted(lost),
+                'gained': sorted(gained),
+            })
+
+        prev_cat = (prev_m.get('category', ''), prev_m.get('subcategory', ''))
+        curr_cat = (curr_m.get('category', ''), curr_m.get('subcategory', ''))
+
+        if prev_cat != curr_cat:
+            diff['category_changes'].append({
+                'name': name,
+                'prev_category': prev_cat[0],
+                'prev_subcategory': prev_cat[1],
+                'curr_category': curr_cat[0],
+                'curr_subcategory': curr_cat[1],
+            })
+
+    return diff
+
+
+def has_changes(diff: dict) -> bool:
+    """Check if diff contains any changes."""
+    return bool(
+        diff.get('summary_changes') or
+        diff.get('new_merchants') or
+        diff.get('removed_merchants') or
+        diff.get('tag_changes') or
+        diff.get('category_changes')
+    )
+
+
+def format_diff_summary(diff: dict, currency_format: str = "${amount}") -> str:
+    """Format diff as a brief summary string.
+
+    Args:
+        diff: Output from compare_reports()
+        currency_format: Currency format string
+
+    Returns:
+        Brief summary string (or empty if no changes)
+    """
+    if not has_changes(diff):
+        return ""
+
+    lines = [f"\n{C.BOLD}Changes since last run:{C.RESET}"]
+
+    # Summary changes
+    summary = diff.get('summary_changes', {})
+    if 'spending_total' in summary:
+        s = summary['spending_total']
+        delta_str = f"+{format_currency(s['delta'], currency_format)}" if s['delta'] >= 0 else format_currency(s['delta'], currency_format)
+        lines.append(f"  Totals: spending {format_currency(s['prev'], currency_format)} → {format_currency(s['curr'], currency_format)} ({delta_str})")
+
+    # Merchant counts
+    new_count = len(diff.get('new_merchants', []))
+    removed_count = len(diff.get('removed_merchants', []))
+    tag_count = len(diff.get('tag_changes', []))
+    cat_count = len(diff.get('category_changes', []))
+
+    merchant_parts = []
+    if new_count:
+        merchant_parts.append(f"+{new_count} new")
+    if removed_count:
+        merchant_parts.append(f"{removed_count} removed")
+    if tag_count:
+        merchant_parts.append(f"{tag_count} tag changes")
+    if cat_count:
+        merchant_parts.append(f"{cat_count} category changes")
+
+    if merchant_parts:
+        lines.append(f"  Merchants: {', '.join(merchant_parts)}")
+
+    lines.append(f"\n  {C.DIM}Use --diff for details.{C.RESET}")
+
+    return "\n".join(lines)
+
+
+def format_diff_detailed(diff: dict, currency_format: str = "${amount}") -> str:
+    """Format diff as detailed output string.
+
+    Args:
+        diff: Output from compare_reports()
+        currency_format: Currency format string
+
+    Returns:
+        Detailed diff string (or empty if no changes)
+    """
+    if not has_changes(diff):
+        return f"\n{C.DIM}No changes since last run.{C.RESET}"
+
+    lines = [f"\n{C.BOLD}{'=' * 60}{C.RESET}"]
+    lines.append(f"{C.BOLD}REPORT DIFF{C.RESET}")
+    lines.append(f"{C.BOLD}{'=' * 60}{C.RESET}")
+
+    # Summary changes
+    summary = diff.get('summary_changes', {})
+    if summary:
+        lines.append(f"\n{C.BOLD}Summary Changes:{C.RESET}")
+        for key, data in summary.items():
+            label = key.replace('_', ' ').title()
+            delta_str = f"+{format_currency(data['delta'], currency_format)}" if data['delta'] >= 0 else format_currency(data['delta'], currency_format)
+            lines.append(f"  {label}: {format_currency(data['prev'], currency_format)} → {format_currency(data['curr'], currency_format)} ({delta_str})")
+
+    # New merchants
+    new_merchants = diff.get('new_merchants', [])
+    if new_merchants:
+        lines.append(f"\n{C.BOLD}New Merchants ({len(new_merchants)}):{C.RESET}")
+        for m in new_merchants[:10]:  # Limit to 10
+            cat_str = f"{m['category']}/{m['subcategory']}" if m['subcategory'] else m['category']
+            lines.append(f"  {C.GREEN}+{C.RESET} {m['name']} ({format_currency(m['total'], currency_format)}, {cat_str})")
+        if len(new_merchants) > 10:
+            lines.append(f"  {C.DIM}... and {len(new_merchants) - 10} more{C.RESET}")
+
+    # Removed merchants
+    removed_merchants = diff.get('removed_merchants', [])
+    if removed_merchants:
+        lines.append(f"\n{C.BOLD}Removed Merchants ({len(removed_merchants)}):{C.RESET}")
+        for m in removed_merchants[:10]:
+            lines.append(f"  {C.RED}-{C.RESET} {m['name']} ({format_currency(m['total'], currency_format)})")
+        if len(removed_merchants) > 10:
+            lines.append(f"  {C.DIM}... and {len(removed_merchants) - 10} more{C.RESET}")
+
+    # Tag changes
+    tag_changes = diff.get('tag_changes', [])
+    if tag_changes:
+        lines.append(f"\n{C.BOLD}Tag Changes ({len(tag_changes)}):{C.RESET}")
+        for t in tag_changes[:10]:
+            parts = []
+            if t['lost']:
+                parts.append(f"lost '{', '.join(t['lost'])}'")
+            if t['gained']:
+                parts.append(f"gained '{', '.join(t['gained'])}'")
+            lines.append(f"  {t['name']}: {'; '.join(parts)}")
+        if len(tag_changes) > 10:
+            lines.append(f"  {C.DIM}... and {len(tag_changes) - 10} more{C.RESET}")
+
+    # Category changes
+    cat_changes = diff.get('category_changes', [])
+    if cat_changes:
+        lines.append(f"\n{C.BOLD}Category Changes ({len(cat_changes)}):{C.RESET}")
+        for c in cat_changes[:10]:
+            prev_cat = f"{c['prev_category']}/{c['prev_subcategory']}" if c['prev_subcategory'] else c['prev_category']
+            curr_cat = f"{c['curr_category']}/{c['curr_subcategory']}" if c['curr_subcategory'] else c['curr_category']
+            lines.append(f"  {c['name']}: {prev_cat} → {curr_cat}")
+        if len(cat_changes) > 10:
+            lines.append(f"  {C.DIM}... and {len(cat_changes) - 10} more{C.RESET}")
+
+    lines.append(f"\n{C.BOLD}{'=' * 60}{C.RESET}")
+
+    return "\n".join(lines)
 
 

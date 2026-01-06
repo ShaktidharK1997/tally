@@ -23,6 +23,11 @@ from ..analyzer import (
     print_summary,
     print_sections_summary,
     write_summary_file_vue,
+    export_json,
+    compare_reports,
+    has_changes,
+    format_diff_summary,
+    format_diff_detailed,
 )
 
 
@@ -183,7 +188,6 @@ def cmd_run(args):
 
     if output_format == 'json':
         # JSON output with reasoning
-        from ..analyzer import export_json
         print(export_json(stats, verbose=verbose, category_filter=category_filter))
     elif output_format == 'markdown':
         # Markdown output with reasoning
@@ -226,5 +230,38 @@ def cmd_run(args):
             # OSC 8 format: \033]8;;URL\033\\text\033]8;;\033\\
             clickable_path = f"\033]8;;{file_url}\033\\{output_path}\033]8;;\033\\"
             print(f"\nHTML report: {clickable_path}")
+
+        # Save JSON report and show diff
+        import json
+        json_path = output_path.rsplit('.', 1)[0] + '.json'
+
+        # Load previous report if exists
+        prev_data = None
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r') as f:
+                    prev_data = json.load(f)
+            except (json.JSONDecodeError, IOError):
+                prev_data = None
+
+        # Generate and save current JSON
+        curr_json = export_json(stats, verbose=verbose)
+        curr_data = json.loads(curr_json)
+
+        with open(json_path, 'w') as f:
+            f.write(curr_json)
+
+        # Show diff if previous report exists
+        if prev_data and not args.quiet:
+            diff = compare_reports(prev_data, curr_data)
+            show_detailed = getattr(args, 'diff', False)
+            if has_changes(diff):
+                if show_detailed:
+                    print(format_diff_detailed(diff, currency_format))
+                else:
+                    print(format_diff_summary(diff, currency_format))
+            elif show_detailed:
+                # User asked for --diff but there are no changes
+                print("\nNo changes since last run.")
 
     print_deprecation_warnings(config)

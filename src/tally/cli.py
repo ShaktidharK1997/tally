@@ -111,6 +111,11 @@ def main():
         default='merchant',
         help='Group output by merchant (default) or subcategory'
     )
+    up_parser.add_argument(
+        '--diff',
+        action='store_true',
+        help='Show detailed diff against previous report'
+    )
 
     # run subcommand (deprecated alias for 'up' - hidden from help)
     run_parser = subparsers.add_parser('run')
